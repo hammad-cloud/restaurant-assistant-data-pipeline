@@ -14,6 +14,13 @@ from validation.schema_validator import validate_required_columns
 from validation.data_validator import validate_positive_values
 
 
+# Import the reusable quarantine function
+from validation.quarantine import split_valid_and_invalid_records
+
+# Import the rejected-record storage function
+from validation.quarantine import save_rejected_records
+
+
 # ==========================================
 # 2. WORKBOOK FILE PATHS
 # ==========================================
@@ -297,3 +304,42 @@ test_invalid_quantities = validate_positive_values(
 # Display the test result
 print("\nInvalid quantity test:")
 print(test_invalid_quantities[["Menu_ID", "Ingredient_ID", "Qty_Per_Portion"]])
+
+
+# ==========================================
+# 20. VALID AND INVALID RECORD SEPARATION
+# ==========================================
+
+# Separate valid and rejected recipe records
+valid_records, rejected_records = split_valid_and_invalid_records(
+    test_inventory_df,
+    test_invalid_quantities
+)
+
+# Display the number of valid records
+print("\nValid recipe records:", len(valid_records))
+
+# Display the number of rejected records
+print("Rejected recipe records:", len(rejected_records))
+
+# Display rejected records with their rejection reasons
+print("\nQuarantined Records:")
+print(
+    rejected_records[
+        ["Menu_ID", "Ingredient_ID", "Qty_Per_Portion", "rejection_reason"]
+    ]
+)
+
+# ==========================================
+# 21. SAVE REJECTED RECORDS
+# ==========================================
+
+# Save rejected recipe records into a CSV file
+rejected_file = save_rejected_records(
+    rejected_records,
+    "recipes"
+)
+
+# Display the saved file location
+if rejected_file:
+    print("\nRejected records saved to:", rejected_file)

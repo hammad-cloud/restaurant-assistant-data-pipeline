@@ -1,6 +1,21 @@
+# Python virtual environment
 .venv/
+
+# Python cache files
 __pycache__/
 *.py[cod]
+
+# Pytest cache
+.pytest_cache/
+
+# Environment secrets
 .env
+
+# VS Code settings
 .vscode/
+
+# Original Excel source files
 data/raw/
+
+# Generated rejected records
+data/rejected/
