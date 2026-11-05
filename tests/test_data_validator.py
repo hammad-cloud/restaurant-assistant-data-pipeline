@@ -6,7 +6,7 @@
 import pandas as pd
 
 # Import the function we want to test
-from src.validation.data_validator import validate_positive_values
+from validation.data_validator import validate_positive_values
 
 # ==========================================
 # 2. TEST NEGATIVE QUANTITY
