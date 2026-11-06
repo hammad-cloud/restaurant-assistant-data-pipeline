@@ -23,6 +23,9 @@ from validation.quarantine import save_rejected_records
 # Import the reusable menu text standardization function
 from transformation.menu_transformer import standardize_menu_text
 
+# Import the reusable menu schema definition
+from validation.menu_schema import required_menu_columns
+
 
 # ==========================================
 # 2. WORKBOOK FILE PATHS
@@ -226,14 +229,6 @@ print("\nNegative Gulshan stock records:", len(negative_gulshan_stock))
 # ==========================================
 # 17. REUSABLE SCHEMA VALIDATION
 # ==========================================
-
-# Define the columns required from the menu catalog
-required_menu_columns = [
-    "Menu_ID",
-    "Item_Name",
-    "Base_Price_PKR",
-    "Catalog_Status"
-]
 
 # Define the columns required from the recipe data
 required_recipe_columns = [
