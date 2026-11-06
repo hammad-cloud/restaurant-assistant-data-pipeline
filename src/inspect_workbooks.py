@@ -318,7 +318,7 @@ except ValueError as error:
 menu_df = transformed_menu_df
 
 # ==========================================
-# 20. MENU PRICE VALIDATION
+# 21. MENU PRICE VALIDATION
 # ==========================================
 
 # Identify menu records with invalid prices
@@ -367,7 +367,7 @@ menu_df = valid_menu_records
 
 
 # ==========================================
-# 21. POSITIVE VALUE VALIDATION TEST
+# 22. POSITIVE VALUE VALIDATION TEST
 # ==========================================
 
 # Create a temporary copy of the Recipes DataFrame
@@ -388,7 +388,7 @@ print(test_invalid_quantities[["Menu_ID", "Ingredient_ID", "Qty_Per_Portion"]])
 
 
 # ==========================================
-# 22. VALID AND INVALID RECORD SEPARATION
+# 23. VALID AND INVALID RECORD SEPARATION
 # ==========================================
 
 # Separate valid and rejected recipe records
@@ -412,7 +412,7 @@ print(
 )
 
 # ==========================================
-# 23. SAVE REJECTED RECORDS
+# 24. SAVE REJECTED RECORDS
 # ==========================================
 
 # Save rejected recipe records into a CSV file
@@ -426,7 +426,7 @@ if rejected_file:
     print("\nRejected records saved to:", rejected_file)
 
 # ==========================================
-# 24. MENU DATA TRANSFORMATION INSPECTION
+# 25. MENU DATA TRANSFORMATION INSPECTION
 # ==========================================
 
 # Display sample values from important menu columns
