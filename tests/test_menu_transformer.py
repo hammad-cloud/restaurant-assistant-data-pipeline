@@ -149,3 +149,41 @@ def test_original_menu_data_remains_unchanged():
 
     # Verify that transformation returns a separate DataFrame
     assert transformed_df is not test_df
+
+
+# ==========================================
+# 6. NON-TEXT VALUE PRESERVATION TEST
+# ==========================================
+
+def test_non_text_values_are_not_lost():
+
+    # Create a sample menu record with numeric and missing values
+    test_df = pd.DataFrame({
+        "Menu_ID": [101],
+        "Item_Name": ["Chicken Biryani"],
+        "Category_ID": [5],
+        "Category": ["Pakistani"],
+        "Description": ["Biryani"],
+        "Currency": [None],
+        "Item_Type": ["Food"],
+        "Catalog_Status": ["Active"],
+        "Recipe_Linked": ["Yes"],
+        "Dietary_Hint": ["None"],
+        "Allergen_Hint": ["None"],
+        "Allergen_Verified": ["No"],
+        "Service_Window": ["All day"],
+        "Upsell_Eligible": ["Yes"],
+        "Slug": [7],
+        "Data_Provenance": ["Synthetic demo pricing"]
+    }, dtype=object)
+
+    # Apply text standardization
+    transformed_df = standardize_menu_text(test_df)
+
+    # Verify that non-text values are kept instead of becoming missing
+    assert transformed_df["Menu_ID"].iloc[0] == 101
+    assert transformed_df["Category_ID"].iloc[0] == 5
+    assert transformed_df["Slug"].iloc[0] == 7
+
+    # Verify that missing values stay missing
+    assert pd.isna(transformed_df["Currency"].iloc[0])

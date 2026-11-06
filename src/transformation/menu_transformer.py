@@ -48,17 +48,26 @@ def standardize_menu_text(df):
             else value
         )
 
+    # Change letter case only for text values, so numbers are not lost
     # Standardize menu identifiers
-    transformed_df["Menu_ID"] = transformed_df["Menu_ID"].str.upper()
+    transformed_df["Menu_ID"] = transformed_df["Menu_ID"].apply(
+        lambda value: value.upper() if isinstance(value, str) else value
+    )
 
     # Standardize category identifiers
-    transformed_df["Category_ID"] = transformed_df["Category_ID"].str.upper()
+    transformed_df["Category_ID"] = transformed_df["Category_ID"].apply(
+        lambda value: value.upper() if isinstance(value, str) else value
+    )
 
     # Standardize currency codes
-    transformed_df["Currency"] = transformed_df["Currency"].str.upper()
+    transformed_df["Currency"] = transformed_df["Currency"].apply(
+        lambda value: value.upper() if isinstance(value, str) else value
+    )
 
     # Standardize URL-friendly slugs
-    transformed_df["Slug"] = transformed_df["Slug"].str.lower()
+    transformed_df["Slug"] = transformed_df["Slug"].apply(
+        lambda value: value.lower() if isinstance(value, str) else value
+    )
 
     # Return the standardized dataset
     return transformed_df
