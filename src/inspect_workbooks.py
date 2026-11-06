@@ -20,6 +20,9 @@ from validation.quarantine import split_valid_and_invalid_records
 # Import the rejected-record storage function
 from validation.quarantine import save_rejected_records
 
+# Import the reusable menu text standardization function
+from transformation.menu_transformer import standardize_menu_text
+
 
 # ==========================================
 # 2. WORKBOOK FILE PATHS
@@ -49,7 +52,6 @@ print("Inventory worksheets:", inventory_excel.sheet_names)
 
 # Read the Menu_Items worksheet into a Pandas DataFrame
 menu_df = pd.read_excel(menu_file, sheet_name="Menu_Items")
-
 
 # ==========================================
 # 5. MENU DATA PREVIEW
@@ -259,9 +261,38 @@ print("\nSchema Validation Results:")
 print("Menu_Items:", menu_schema_valid)
 print("Recipes:", recipe_schema_valid)
 
+# ==========================================
+# 18. MENU DATA STANDARDIZATION
+# ==========================================
+
+# Preserve the original menu dataset
+original_menu_df = menu_df.copy(deep=True)
+
+# Apply menu text standardization
+transformed_menu_df = standardize_menu_text(menu_df)
 
 # ==========================================
-# 18. SCHEMA VALIDATION FAILURE TEST
+# 19. MENU TRANSFORMATION VERIFICATION
+# ==========================================
+
+# Display original and transformed menu identifiers
+print("\nOriginal Menu ID:", original_menu_df["Menu_ID"].iloc[0])
+print("Transformed Menu ID:", transformed_menu_df["Menu_ID"].iloc[0])
+
+# Verify that the original dataset remains unchanged
+print(
+    "Original data preserved:",
+    original_menu_df.equals(menu_df)
+)
+
+# Verify that the transformed dataset is a separate copy
+print(
+    "Separate DataFrame:",
+    transformed_menu_df is not menu_df
+)
+
+# ==========================================
+# 20. SCHEMA VALIDATION FAILURE TEST
 # ==========================================
 
 # Create a temporary copy of the Recipes DataFrame
@@ -286,7 +317,7 @@ except ValueError as error:
 
 
 # ==========================================
-# 19. POSITIVE VALUE VALIDATION TEST
+# 21. POSITIVE VALUE VALIDATION TEST
 # ==========================================
 
 # Create a temporary copy of the Recipes DataFrame
@@ -307,7 +338,7 @@ print(test_invalid_quantities[["Menu_ID", "Ingredient_ID", "Qty_Per_Portion"]])
 
 
 # ==========================================
-# 20. VALID AND INVALID RECORD SEPARATION
+# 22. VALID AND INVALID RECORD SEPARATION
 # ==========================================
 
 # Separate valid and rejected recipe records
@@ -331,7 +362,7 @@ print(
 )
 
 # ==========================================
-# 21. SAVE REJECTED RECORDS
+# 23. SAVE REJECTED RECORDS
 # ==========================================
 
 # Save rejected recipe records into a CSV file
@@ -343,3 +374,21 @@ rejected_file = save_rejected_records(
 # Display the saved file location
 if rejected_file:
     print("\nRejected records saved to:", rejected_file)
+
+# ==========================================
+# 24. MENU DATA TRANSFORMATION INSPECTION
+# ==========================================
+
+# Display sample values from important menu columns
+columns_to_inspect = [
+    "Menu_ID",
+    "Item_Name",
+    "Category",
+    "Currency",
+    "Item_Type",
+    "Catalog_Status"
+]
+
+for column in columns_to_inspect:
+    print(f"\n{column}:")
+    print(menu_df[column].head(10).tolist())
