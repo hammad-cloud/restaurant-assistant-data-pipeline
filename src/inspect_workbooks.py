@@ -166,9 +166,6 @@ print("\nInvalid recipe ID count:", len(invalid_recipe_ids))
 # Display any invalid recipe records
 print(invalid_recipe_ids)
 
-# Display the number of invalid Menu_ID values
-print("Invalid recipe ID count:", len(invalid_recipe_ids))
-
 # ==========================================
 # 14. MENU ITEMS WITHOUT RECIPES
 # ==========================================
@@ -315,8 +312,6 @@ except ValueError as error:
     print(error)
 
 
-menu_df = transformed_menu_df
-
 # ==========================================
 # 21. MENU PRICE VALIDATION
 # ==========================================
@@ -359,11 +354,6 @@ if menu_price_rejection_file:
 
 # Continue processing only menu records with valid prices
 menu_df = valid_menu_records
-
-
-
-
-
 
 
 # ==========================================
