@@ -52,7 +52,7 @@ def test_split_valid_and_invalid_records():
     # Confirm that the original DataFrame remains unchanged
     assert len(test_df) == 3
 
-    # ==========================================
+# ==========================================
 # 3. TEST SAVING REJECTED RECORDS TO CSV
 # ==========================================
 
@@ -79,6 +79,7 @@ def test_save_rejected_records(tmp_path):
     )
 
     # Confirm that the CSV file was created
+    assert saved_file is not None, "Expected a CSV file path, but received None."
     assert saved_file.exists()
 
     # Read the saved CSV file
@@ -95,3 +96,36 @@ def test_save_rejected_records(tmp_path):
 
     # Confirm that the CSV does not contain an extra index column
     assert "Unnamed: 0" not in saved_records.columns
+
+
+# ==========================================
+# 4. TEST EMPTY REJECTED RECORDS
+# ==========================================
+
+def test_save_empty_rejected_records(tmp_path):
+
+    # Import the CSV saving function
+    from validation.quarantine import save_rejected_records
+
+    # Create an empty DataFrame with the expected columns
+    rejected_records = pd.DataFrame(
+        columns=[
+            "Menu_ID",
+            "Ingredient_ID",
+            "Qty_Per_Portion",
+            "rejection_reason"
+        ]
+    )
+
+    # Attempt to save the empty rejected dataset
+    saved_file = save_rejected_records(
+        rejected_records,
+        "recipes",
+        output_dir=tmp_path
+    )
+
+    # Confirm that the function returns None
+    assert saved_file is None
+
+    # Confirm that no CSV file was created
+    assert list(tmp_path.iterdir()) == []
