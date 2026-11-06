@@ -320,6 +320,57 @@ except ValueError as error:
     print(error)
 
 
+menu_df = transformed_menu_df
+
+# ==========================================
+# 20. MENU PRICE VALIDATION
+# ==========================================
+
+# Identify menu records with invalid prices
+invalid_menu_prices = validate_positive_values(
+    menu_df,
+    "Base_Price_PKR"
+)
+
+# Separate valid and rejected menu records
+valid_menu_records, rejected_menu_prices = split_valid_and_invalid_records(
+    menu_df,
+    invalid_menu_prices
+)
+
+# Display the validation results
+print("\nMenu Price Validation:")
+print("Valid menu records:", len(valid_menu_records))
+print("Rejected menu records:", len(rejected_menu_prices))
+
+# Display rejected menu records with their reasons
+if not rejected_menu_prices.empty:
+    print("\nRejected Menu Prices:")
+    print(
+        rejected_menu_prices[
+            ["Menu_ID", "Item_Name", "Base_Price_PKR", "rejection_reason"]
+        ]
+    )
+
+# Save rejected menu records
+menu_price_rejection_file = save_rejected_records(
+    rejected_menu_prices,
+    "menu_prices"
+)
+
+# Display the saved file location
+if menu_price_rejection_file:
+    print("\nRejected menu prices saved to:", menu_price_rejection_file)
+
+# Continue processing only menu records with valid prices
+menu_df = valid_menu_records
+
+
+
+
+
+
+
 # ==========================================
 # 21. POSITIVE VALUE VALIDATION TEST
 # ==========================================
