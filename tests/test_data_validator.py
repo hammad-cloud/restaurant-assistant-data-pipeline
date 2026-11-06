@@ -158,3 +158,150 @@ def test_invalid_menu_prices_are_rejected():
         "Base_Price_PKR cannot be negative.",
         "Base_Price_PKR is missing."
     ]
+
+
+# ==========================================
+# 7. DUPLICATE MENU ID VALIDATION TEST
+# ==========================================
+
+def test_duplicate_menu_ids_are_rejected():
+
+    # Import the function under test
+    from validation.data_validator import validate_unique_values
+
+    # Create menu records where MENU001 appears twice
+    menu_df = pd.DataFrame({
+        "Menu_ID": ["MENU001", "MENU002", "MENU001"],
+        "Base_Price_PKR": [450, 650, 500]
+    })
+
+    # Validate menu identifiers
+    invalid_records = validate_unique_values(menu_df, "Menu_ID")
+
+    # Verify that both copies of MENU001 are rejected
+    assert invalid_records.index.tolist() == [0, 2]
+
+    # Verify the rejection reason
+    assert invalid_records["rejection_reason"].tolist() == [
+        "Menu_ID is duplicated.",
+        "Menu_ID is duplicated."
+    ]
+
+
+def test_unique_menu_ids_are_accepted():
+
+    # Import the function under test
+    from validation.data_validator import validate_unique_values
+
+    # Create menu records with unique identifiers
+    menu_df = pd.DataFrame({"Menu_ID": ["MENU001", "MENU002"]})
+
+    # Confirm that no records were rejected
+    assert len(validate_unique_values(menu_df, "Menu_ID")) == 0
+
+
+# ==========================================
+# 8. NON-NUMERIC VALUE VALIDATION TEST
+# ==========================================
+
+def test_text_prices_are_rejected_without_crashing():
+
+    # Create menu prices that include text values
+    menu_df = pd.DataFrame({
+        "Menu_ID": ["MENU001", "MENU002", "MENU003"],
+        "Base_Price_PKR": [450, "N/A", "650"]
+    })
+
+    # Validate menu prices
+    invalid_records = validate_positive_values(menu_df, "Base_Price_PKR")
+
+    # Verify that only the text value is rejected (numeric text "650" is accepted)
+    assert invalid_records["Menu_ID"].tolist() == ["MENU002"]
+    assert invalid_records["rejection_reason"].tolist() == [
+        "Base_Price_PKR is not a number."
+    ]
+
+
+# ==========================================
+# 9. REQUIRED VALUE VALIDATION TESTS
+# ==========================================
+
+def test_missing_and_blank_ids_are_rejected():
+
+    # Import the function under test
+    from validation.data_validator import validate_required_values
+
+    # Create records with one missing and one blank Menu_ID
+    menu_df = pd.DataFrame({"Menu_ID": ["MENU001", None, "  "]})
+
+    # Validate menu identifiers
+    invalid_records = validate_required_values(menu_df, "Menu_ID")
+
+    # Verify that both missing identifiers are rejected
+    assert invalid_records.index.tolist() == [1, 2]
+    assert invalid_records["rejection_reason"].tolist() == [
+        "Menu_ID is missing.",
+        "Menu_ID is missing."
+    ]
+
+
+def test_missing_values_in_any_id_column_are_rejected():
+
+    # Import the function under test
+    from validation.data_validator import validate_required_values
+
+    # Create recipe records with a missing Ingredient_ID
+    recipe_df = pd.DataFrame({
+        "Menu_ID": ["MENU001", "MENU001"],
+        "Ingredient_ID": ["ING001", None]
+    })
+
+    # Validate both identifier columns
+    invalid_records = validate_required_values(recipe_df, ["Menu_ID", "Ingredient_ID"])
+
+    # Verify that the record and the missing column are reported
+    assert invalid_records["rejection_reason"].tolist() == ["Ingredient_ID is missing."]
+
+
+# ==========================================
+# 10. COMBINED KEY AND FOREIGN KEY TESTS
+# ==========================================
+
+def test_duplicate_recipe_key_combinations_are_rejected():
+
+    # Import the function under test
+    from validation.data_validator import validate_unique_values
+
+    # Create recipes where MENU001 + ING001 appears twice
+    recipe_df = pd.DataFrame({
+        "Menu_ID": ["MENU001", "MENU001", "MENU001"],
+        "Ingredient_ID": ["ING001", "ING002", "ING001"]
+    })
+
+    # Validate the identifier combination
+    invalid_records = validate_unique_values(recipe_df, ["Menu_ID", "Ingredient_ID"])
+
+    # Verify that both copies are rejected with a readable reason
+    assert invalid_records.index.tolist() == [0, 2]
+    assert invalid_records["rejection_reason"].iloc[0] == (
+        "Menu_ID + Ingredient_ID is duplicated."
+    )
+
+
+def test_recipes_without_menu_item_are_rejected():
+
+    # Import the function under test
+    from validation.data_validator import validate_foreign_keys
+
+    # Create recipes where MENU009 is not on the menu
+    recipe_df = pd.DataFrame({"Menu_ID": ["MENU001", "MENU009"]})
+    menu_ids = pd.Series(["MENU001", "MENU002"])
+
+    # Validate the menu link
+    invalid_records = validate_foreign_keys(recipe_df, "Menu_ID", menu_ids, "validated menu")
+
+    # Verify that only the orphan recipe is rejected
+    assert invalid_records["Menu_ID"].tolist() == ["MENU009"]
+    assert invalid_records["rejection_reason"].iloc[0] == (
+        "Menu_ID not found in validated menu."
+    )

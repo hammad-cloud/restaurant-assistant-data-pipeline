@@ -102,6 +102,20 @@ def test_numpy_and_python_booleans_produce_same_hash():
     assert normalize_value(np.bool_(True)) is True
 
 
+def test_float_noise_does_not_change_hash():
+
+    # Create the same stock value with and without float noise
+    noisy_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Stock": [18.790000000000003]})
+    clean_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Stock": [18.79]})
+
+    # Generate hashes for both datasets
+    noisy_hash = add_record_hash(noisy_df, ["Menu_ID", "Stock"])["record_hash"].iloc[0]
+    clean_hash = add_record_hash(clean_df, ["Menu_ID", "Stock"])["record_hash"].iloc[0]
+
+    # Confirm that float noise is ignored
+    assert noisy_hash == clean_hash
+
+
 def test_real_value_change_produces_different_hash():
 
     # Create two prices that differ only in decimals

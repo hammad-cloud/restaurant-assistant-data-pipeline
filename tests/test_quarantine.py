@@ -129,3 +129,50 @@ def test_save_empty_rejected_records(tmp_path):
 
     # Confirm that no CSV file was created
     assert list(tmp_path.iterdir()) == []
+
+
+# ==========================================
+# 5. TEST REJECTED FILE IS REPLACED, NOT DUPLICATED
+# ==========================================
+
+def test_rejected_file_is_replaced_and_cleared(tmp_path):
+
+    # Import the CSV saving function
+    from validation.quarantine import save_rejected_records
+
+    # Save rejects from two runs
+    first = pd.DataFrame({"Menu_ID": ["MENU001"], "rejection_reason": ["x"]})
+    second = pd.DataFrame({"Menu_ID": ["MENU002"], "rejection_reason": ["y"]})
+    save_rejected_records(first, "recipes", output_dir=tmp_path)
+    saved_file = save_rejected_records(second, "recipes", output_dir=tmp_path)
+
+    # Confirm that only one file exists and it holds the latest run
+    assert list(tmp_path.iterdir()) == [saved_file]
+    assert pd.read_csv(saved_file)["Menu_ID"].tolist() == ["MENU002"]
+
+    # Save a run with no rejects
+    save_rejected_records(first.iloc[0:0], "recipes", output_dir=tmp_path)
+
+    # Confirm that the previous run's file was removed
+    assert list(tmp_path.iterdir()) == []
+
+
+# ==========================================
+# 6. TEST QUARANTINE AND REPORT
+# ==========================================
+
+def test_quarantine_records_returns_valid_and_saves_rejects(tmp_path):
+
+    # Import the combined quarantine function
+    from validation.quarantine import quarantine_records
+
+    # Create records where the second one is invalid
+    df = pd.DataFrame({"Menu_ID": ["MENU001", "MENU002"]})
+    invalid = df.iloc[[1]].assign(rejection_reason="bad")
+
+    # Quarantine the invalid record
+    valid = quarantine_records(df, invalid, "menu_test", output_dir=tmp_path)
+
+    # Confirm the valid records and the saved reject file
+    assert valid["Menu_ID"].tolist() == ["MENU001"]
+    assert pd.read_csv(tmp_path / "rejected_menu_test.csv")["Menu_ID"].tolist() == ["MENU002"]

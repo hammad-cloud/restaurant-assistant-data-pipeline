@@ -26,11 +26,12 @@ def load_snapshot(snapshot_path, id_column="Menu_ID"):
     if not path.exists():
         return None
 
+    # Accept one ID column or a list of ID columns
+    id_columns = [id_column] if isinstance(id_column, str) else list(id_column)
+
     # Read IDs and stored hashes as text so they are compared exactly
-    return pd.read_csv(
-        path,
-        dtype={id_column: str, "record_hash": str}
-    )
+    text_columns = {column: str for column in id_columns + ["record_hash"]}
+    return pd.read_csv(path, dtype=text_columns)
 
 
 # ==========================================

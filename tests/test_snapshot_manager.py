@@ -112,3 +112,29 @@ def test_successful_write_leaves_no_temp_file(tmp_path):
 
     # Confirm that only the final snapshot remains
     assert list(tmp_path.iterdir()) == [snapshot_file]
+
+
+# ==========================================
+# 6. COMBINED ID SNAPSHOT TEST
+# ==========================================
+
+def test_snapshot_with_combined_ids(tmp_path):
+
+    # Create a hashed recipe dataset
+    recipe_df = add_record_hash(
+        pd.DataFrame({
+            "Menu_ID": ["MENU001", "MENU001"],
+            "Ingredient_ID": ["ING001", "ING002"],
+            "Qty": [0.25, 0.5]
+        }),
+        ["Menu_ID", "Ingredient_ID", "Qty"]
+    )
+    snapshot_file = tmp_path / "recipes.csv"
+    id_columns = ["Menu_ID", "Ingredient_ID"]
+
+    # Save the baseline, then compare an identical run
+    assert update_snapshot(recipe_df, snapshot_file, id_columns) is None
+    changes = update_snapshot(recipe_df, snapshot_file, id_columns)
+
+    # Confirm that both ingredients are unchanged
+    assert changes["unchanged"] == {("MENU001", "ING001"), ("MENU001", "ING002")}

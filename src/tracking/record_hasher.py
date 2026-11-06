@@ -40,9 +40,10 @@ def normalize_value(value):
     if isinstance(value, numbers.Integral):
         return int(value)
 
-    # Convert whole-number decimals such as 450.0 into 450
+    # Round away float noise (18.790000000000003 -> 18.79), then
+    # convert whole-number decimals such as 450.0 into 450
     if isinstance(value, numbers.Real):
-        value = float(value)
+        value = round(float(value), 9)
         return int(value) if value.is_integer() else value
 
     # Leave text and other values unchanged

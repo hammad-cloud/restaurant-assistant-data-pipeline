@@ -16,6 +16,15 @@ from validation.schema_validator import validate_required_columns
 # Import the reusable positive value validation function
 from validation.data_validator import validate_positive_values
 
+# Import the reusable unique value validation function
+from validation.data_validator import validate_unique_values
+
+# Import the reusable required value validation function
+from validation.data_validator import validate_required_values
+
+# Import the reusable foreign key validation function
+from validation.data_validator import validate_foreign_keys
+
 
 # Import the reusable quarantine function
 from validation.quarantine import split_valid_and_invalid_records
@@ -23,8 +32,14 @@ from validation.quarantine import split_valid_and_invalid_records
 # Import the rejected-record storage function
 from validation.quarantine import save_rejected_records
 
+# Import the combined split, save, and report function
+from validation.quarantine import quarantine_records
+
 # Import the reusable menu text standardization function
 from transformation.menu_transformer import standardize_menu_text
+
+# Import the reusable recipe ID standardization function
+from transformation.recipe_transformer import standardize_recipe_ids
 
 # Import the reusable menu schema definition
 from validation.menu_schema import required_menu_columns
@@ -53,6 +68,12 @@ rejected_dir = project_root / "data" / "rejected"
 
 # Define the file for the latest processed menu snapshot
 menu_snapshot_file = project_root / "data" / "processed" / "menu_items.csv"
+
+# Define the file for the latest processed recipe snapshot
+recipe_snapshot_file = project_root / "data" / "processed" / "recipes.csv"
+
+# Define the columns that identify one recipe record
+recipe_id_columns = ["Menu_ID", "Ingredient_ID"]
 
 
 # ==========================================
@@ -125,12 +146,18 @@ print(inventory_df.columns.tolist())
 # ==========================================
 
 # Define the columns required from the recipe data
+# (all columns, so a change in any of them is tracked)
 required_recipe_columns = [
     "Menu_ID",
+    "Menu_Item",
+    "Category",
     "Ingredient_ID",
+    "Ingredient_Name",
     "Qty_Per_Portion",
     "PECHS_Available",
-    "Gulshan_Available"
+    "PECHS_Max_Portions",
+    "Gulshan_Available",
+    "Gulshan_Max_Portions"
 ]
 
 # Validate the structure of the Menu_Items dataset
@@ -239,12 +266,12 @@ print(menu_without_recipes[["Menu_ID", "Item_Name", "Catalog_Status"]])
 
 # Identify menu items with negative prices
 negative_prices = menu_df[
-    menu_df["Base_Price_PKR"] < 0
+    pd.to_numeric(menu_df["Base_Price_PKR"], errors="coerce") < 0
 ]
 
 # Identify recipes with zero or negative ingredient quantities
 invalid_quantities = inventory_df[
-    inventory_df["Qty_Per_Portion"] <= 0
+    pd.to_numeric(inventory_df["Qty_Per_Portion"], errors="coerce") <= 0
 ]
 
 # Display the number of menu items with negative prices
@@ -259,12 +286,12 @@ print("\nRecipes with invalid quantities:", len(invalid_quantities))
 
 # Identify ingredients with negative PECHS availability
 negative_pechs_stock = inventory_df[
-    inventory_df["PECHS_Available"] < 0
+    pd.to_numeric(inventory_df["PECHS_Available"], errors="coerce") < 0
 ]
 
 # Identify ingredients with negative Gulshan availability
 negative_gulshan_stock = inventory_df[
-    inventory_df["Gulshan_Available"] < 0
+    pd.to_numeric(inventory_df["Gulshan_Available"], errors="coerce") < 0
 ]
 
 # Display the number of negative PECHS stock records
@@ -307,6 +334,14 @@ print(
 
 # Use the standardized menu dataset for subsequent processing
 menu_df = transformed_menu_df
+
+
+# ==========================================
+# 19b. RECIPE ID STANDARDIZATION
+# ==========================================
+
+# Trim and uppercase recipe IDs so they match the standardized menu IDs
+inventory_df = standardize_recipe_ids(inventory_df)
 
 # ==========================================
 # 20. SCHEMA VALIDATION FAILURE TEST
@@ -377,6 +412,30 @@ if menu_price_rejection_file:
 # Continue processing only menu records with valid prices
 menu_df = valid_menu_records
 
+# Store prices as numbers (text such as "450" was accepted above)
+menu_df["Base_Price_PKR"] = pd.to_numeric(menu_df["Base_Price_PKR"])
+
+
+# ==========================================
+# 21b. MENU ID QUARANTINE
+# ==========================================
+
+# Reject menu records with a missing or blank Menu_ID
+menu_df = quarantine_records(
+    menu_df,
+    validate_required_values(menu_df, "Menu_ID"),
+    "menu_missing_ids",
+    output_dir=str(rejected_dir)
+)
+
+# Reject every copy of a repeated Menu_ID (after IDs were standardized)
+menu_df = quarantine_records(
+    menu_df,
+    validate_unique_values(menu_df, "Menu_ID"),
+    "menu_duplicates",
+    output_dir=str(rejected_dir)
+)
+
 
 # ==========================================
 # 22. RECIPE QUANTITY VALIDATION
@@ -432,6 +491,39 @@ if rejected_file:
 # Continue processing only recipe records with valid quantities
 inventory_df = valid_records
 
+# Store quantities as numbers (text such as "0.25" was accepted above)
+inventory_df["Qty_Per_Portion"] = pd.to_numeric(inventory_df["Qty_Per_Portion"])
+
+
+# ==========================================
+# 24b. RECIPE ID AND MENU LINK QUARANTINE
+# ==========================================
+
+# Reject recipe records with a missing or blank Menu_ID or Ingredient_ID
+inventory_df = quarantine_records(
+    inventory_df,
+    validate_required_values(inventory_df, recipe_id_columns),
+    "recipe_missing_ids",
+    output_dir=str(rejected_dir)
+)
+
+# Reject every copy of a repeated Menu_ID + Ingredient_ID combination
+inventory_df = quarantine_records(
+    inventory_df,
+    validate_unique_values(inventory_df, recipe_id_columns),
+    "recipe_duplicates",
+    output_dir=str(rejected_dir)
+)
+
+# Reject recipes whose menu item is not in the final validated menu
+# (this runs after all menu checks, so recipes of rejected items are caught)
+inventory_df = quarantine_records(
+    inventory_df,
+    validate_foreign_keys(inventory_df, "Menu_ID", menu_df["Menu_ID"], "validated menu"),
+    "recipe_orphans",
+    output_dir=str(rejected_dir)
+)
+
 # ==========================================
 # 25. MENU DATA TRANSFORMATION INSPECTION
 # ==========================================
@@ -452,23 +544,31 @@ for column in columns_to_inspect:
 
 
 # ==========================================
-# 26. MENU SNAPSHOT AND CHANGE DETECTION
+# 26. SNAPSHOT AND CHANGE DETECTION
 # ==========================================
 
-# Add a fingerprint to every validated menu record
-hashed_menu_df = add_record_hash(menu_df, required_menu_columns)
+# Define each dataset to track: name, data, hashed columns, ID, snapshot file
+tracked_datasets = [
+    ("menu", menu_df, required_menu_columns, "Menu_ID", menu_snapshot_file),
+    ("recipe", inventory_df, required_recipe_columns, recipe_id_columns, recipe_snapshot_file),
+]
 
-# Compare with the previous snapshot, then save the new snapshot
-menu_changes = update_snapshot(hashed_menu_df, menu_snapshot_file)
+for name, df, hash_columns, id_column, snapshot_file in tracked_datasets:
 
-# Report the baseline on the first run
-if menu_changes is None:
-    print("\nNo previous menu snapshot found.")
-    print("Baseline menu snapshot saved to:", menu_snapshot_file)
+    # Add a fingerprint to every validated record
+    hashed_df = add_record_hash(df, hash_columns)
 
-# Report record changes on later runs
-else:
-    print("\nMenu Change Detection:")
-    for change_type in ["new", "changed", "unchanged", "removed"]:
-        print(f"{change_type.capitalize()} menu records:", len(menu_changes[change_type]))
-    print("Menu snapshot updated:", menu_snapshot_file)
+    # Compare with the previous snapshot, then save the new snapshot
+    changes = update_snapshot(hashed_df, snapshot_file, id_column)
+
+    # Report the baseline on the first run
+    if changes is None:
+        print(f"\nNo previous {name} snapshot found.")
+        print(f"Baseline {name} snapshot saved to:", snapshot_file)
+
+    # Report record changes on later runs
+    else:
+        print(f"\n{name.capitalize()} Change Detection:")
+        for change_type in ["new", "changed", "unchanged", "removed"]:
+            print(f"{change_type.capitalize()} {name} records:", len(changes[change_type]))
+        print(f"{name.capitalize()} snapshot updated:", snapshot_file)

@@ -46,10 +46,13 @@ Run the pipeline:
 python src/inspect_workbooks.py
 ```
 
-Rejected records are saved as CSV files in `data/rejected/`.
+Rejected records are saved as CSV files in `data/rejected/`, one file per check
+(for example `rejected_menu_prices.csv`). Each run replaces these files, and a file
+is removed when its check finds nothing.
 
-The validated menu is saved with a `record_hash` column to `data/processed/menu_items.csv`.
-The first run saves a baseline; later runs report new, changed, unchanged and removed menu records.
+The validated menu and recipes are saved with a `record_hash` column to
+`data/processed/menu_items.csv` and `data/processed/recipes.csv`.
+The first run saves a baseline; later runs report new, changed, unchanged and removed records.
 
 Run the tests:
 
