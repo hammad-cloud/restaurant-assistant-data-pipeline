@@ -8,8 +8,45 @@ import hashlib
 # Import json to serialize record values consistently
 import json
 
+# Import numbers to recognise Python and NumPy numeric values
+import numbers
+
+# Import NumPy to recognise NumPy boolean values
+import numpy as np
+
 # Import Pandas for DataFrame and missing-value handling
 import pandas as pd
+
+
+# ==========================================
+# 1b. VALUE NORMALIZATION FUNCTION
+# ==========================================
+
+def normalize_value(value):
+    """
+    Convert a value into a consistent form before hashing,
+    so 450 and 450.0 produce the same hash.
+    """
+
+    # Standardize missing values as None
+    if pd.isna(value):
+        return None
+
+    # Keep True/False as plain booleans (they also count as numbers)
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+
+    # Convert NumPy and Python integers to plain Python integers
+    if isinstance(value, numbers.Integral):
+        return int(value)
+
+    # Convert whole-number decimals such as 450.0 into 450
+    if isinstance(value, numbers.Real):
+        value = float(value)
+        return int(value) if value.is_integer() else value
+
+    # Leave text and other values unchanged
+    return value
 
 
 # ==========================================
@@ -55,9 +92,9 @@ def add_record_hash(df, columns, hash_column="record_hash"):
     # Define a function to generate a hash for each row
     def hash_row(row):
 
-        # Standardize missing values as None
+        # Standardize missing and numeric values
         values = [
-            None if pd.isna(value) else value
+            normalize_value(value)
             for value in row
         ]
 

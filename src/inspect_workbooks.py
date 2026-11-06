@@ -29,6 +29,12 @@ from transformation.menu_transformer import standardize_menu_text
 # Import the reusable menu schema definition
 from validation.menu_schema import required_menu_columns
 
+# Import the reusable record hashing function
+from tracking.record_hasher import add_record_hash
+
+# Import the snapshot comparison and storage function
+from tracking.snapshot_manager import update_snapshot
+
 
 # ==========================================
 # 2. WORKBOOK FILE PATHS
@@ -44,6 +50,9 @@ inventory_file = project_root / "data" / "raw" / "mMcHmK.xlsx"
 
 # Define the folder for rejected records
 rejected_dir = project_root / "data" / "rejected"
+
+# Define the file for the latest processed menu snapshot
+menu_snapshot_file = project_root / "data" / "processed" / "menu_items.csv"
 
 
 # ==========================================
@@ -440,3 +449,26 @@ columns_to_inspect = [
 for column in columns_to_inspect:
     print(f"\n{column}:")
     print(menu_df[column].head(10).tolist())
+
+
+# ==========================================
+# 26. MENU SNAPSHOT AND CHANGE DETECTION
+# ==========================================
+
+# Add a fingerprint to every validated menu record
+hashed_menu_df = add_record_hash(menu_df, required_menu_columns)
+
+# Compare with the previous snapshot, then save the new snapshot
+menu_changes = update_snapshot(hashed_menu_df, menu_snapshot_file)
+
+# Report the baseline on the first run
+if menu_changes is None:
+    print("\nNo previous menu snapshot found.")
+    print("Baseline menu snapshot saved to:", menu_snapshot_file)
+
+# Report record changes on later runs
+else:
+    print("\nMenu Change Detection:")
+    for change_type in ["new", "changed", "unchanged", "removed"]:
+        print(f"{change_type.capitalize()} menu records:", len(menu_changes[change_type]))
+    print("Menu snapshot updated:", menu_snapshot_file)

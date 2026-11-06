@@ -15,6 +15,7 @@ required_menu_columns = [
     "Item_Type",
     "Catalog_Status",
     "Recipe_Linked",
+    "Prep_Time_Min",
     "Dietary_Hint",
     "Allergen_Hint",
     "Allergen_Verified",

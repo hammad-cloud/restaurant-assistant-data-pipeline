@@ -19,3 +19,6 @@ data/raw/
 
 # Generated rejected records
 data/rejected/
+
+# Generated processed snapshots
+data/processed/

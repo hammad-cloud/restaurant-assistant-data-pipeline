@@ -57,3 +57,60 @@ def test_add_record_hash():
 
     # Confirm that the original dataset remains unchanged
     assert "record_hash" not in menu_df.columns
+
+# ==========================================
+# 4. NUMERIC HASH STABILITY TESTS
+# ==========================================
+
+def test_integer_and_whole_decimal_produce_same_hash():
+
+    # Create the same price stored as an integer and as a decimal
+    int_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Price": [450]})
+    float_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Price": [450.0]})
+
+    # Generate hashes for both datasets
+    int_hash = add_record_hash(int_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+    float_hash = add_record_hash(float_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+
+    # Confirm that the same value produces the same hash
+    assert int_hash == float_hash
+
+
+def test_column_upcast_by_missing_value_keeps_hash():
+
+    # Create an integer price column
+    clean_df = pd.DataFrame({"Menu_ID": ["MENU001", "MENU002"], "Price": [450, 650]})
+
+    # Create the same data where a missing value turns the column into decimals
+    upcast_df = pd.DataFrame({"Menu_ID": ["MENU001", "MENU002"], "Price": [450, None]})
+
+    # Generate hashes for both datasets
+    clean_hash = add_record_hash(clean_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+    upcast_hash = add_record_hash(upcast_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+
+    # Confirm that the unchanged first record keeps its hash
+    assert clean_hash == upcast_hash
+
+
+def test_numpy_and_python_booleans_produce_same_hash():
+
+    # Import NumPy to create a NumPy boolean value
+    import numpy as np
+
+    # Confirm that NumPy and Python booleans normalize to the same value
+    from tracking.record_hasher import normalize_value
+    assert normalize_value(np.bool_(True)) is True
+
+
+def test_real_value_change_produces_different_hash():
+
+    # Create two prices that differ only in decimals
+    old_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Price": [450.0]})
+    new_df = pd.DataFrame({"Menu_ID": ["MENU001"], "Price": [450.5]})
+
+    # Generate hashes for both datasets
+    old_hash = add_record_hash(old_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+    new_hash = add_record_hash(new_df, ["Menu_ID", "Price"])["record_hash"].iloc[0]
+
+    # Confirm that a real change is still detected
+    assert old_hash != new_hash

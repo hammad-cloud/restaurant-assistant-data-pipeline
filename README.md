@@ -48,6 +48,9 @@ python src/inspect_workbooks.py
 
 Rejected records are saved as CSV files in `data/rejected/`.
 
+The validated menu is saved with a `record_hash` column to `data/processed/menu_items.csv`.
+The first run saves a baseline; later runs report new, changed, unchanged and removed menu records.
+
 Run the tests:
 
 ```powershell
