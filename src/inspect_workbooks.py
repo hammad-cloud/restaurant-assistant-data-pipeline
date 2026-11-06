@@ -367,24 +367,14 @@ menu_df = valid_menu_records
 
 
 # ==========================================
-# 22. POSITIVE VALUE VALIDATION TEST
+# 22. RECIPE QUANTITY VALIDATION
 # ==========================================
 
-# Create a temporary copy of the Recipes DataFrame
-test_inventory_df = inventory_df.copy()
-
-# Insert an invalid ingredient quantity for testing
-test_inventory_df.loc[0, "Qty_Per_Portion"] = -3
-
-# Run the reusable quantity validator
-test_invalid_quantities = validate_positive_values(
-    test_inventory_df,
+# Identify recipe records with missing, zero, or negative quantities
+invalid_recipe_quantities = validate_positive_values(
+    inventory_df,
     "Qty_Per_Portion"
 )
-
-# Display the test result
-print("\nInvalid quantity test:")
-print(test_invalid_quantities[["Menu_ID", "Ingredient_ID", "Qty_Per_Portion"]])
 
 
 # ==========================================
@@ -393,8 +383,8 @@ print(test_invalid_quantities[["Menu_ID", "Ingredient_ID", "Qty_Per_Portion"]])
 
 # Separate valid and rejected recipe records
 valid_records, rejected_records = split_valid_and_invalid_records(
-    test_inventory_df,
-    test_invalid_quantities
+    inventory_df,
+    invalid_recipe_quantities
 )
 
 # Display the number of valid records
@@ -404,12 +394,13 @@ print("\nValid recipe records:", len(valid_records))
 print("Rejected recipe records:", len(rejected_records))
 
 # Display rejected records with their rejection reasons
-print("\nQuarantined Records:")
-print(
-    rejected_records[
-        ["Menu_ID", "Ingredient_ID", "Qty_Per_Portion", "rejection_reason"]
-    ]
-)
+if not rejected_records.empty:
+    print("\nQuarantined Records:")
+    print(
+        rejected_records[
+            ["Menu_ID", "Ingredient_ID", "Qty_Per_Portion", "rejection_reason"]
+        ]
+    )
 
 # ==========================================
 # 24. SAVE REJECTED RECORDS
@@ -424,6 +415,9 @@ rejected_file = save_rejected_records(
 # Display the saved file location
 if rejected_file:
     print("\nRejected records saved to:", rejected_file)
+
+# Continue processing only recipe records with valid quantities
+inventory_df = valid_records
 
 # ==========================================
 # 25. MENU DATA TRANSFORMATION INSPECTION
