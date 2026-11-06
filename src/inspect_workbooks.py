@@ -291,6 +291,10 @@ print(
     transformed_menu_df is not menu_df
 )
 
+
+# Use the standardized menu dataset for subsequent processing
+menu_df = transformed_menu_df
+
 # ==========================================
 # 20. SCHEMA VALIDATION FAILURE TEST
 # ==========================================
