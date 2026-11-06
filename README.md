@@ -1,4 +1,3 @@
-@"
 # Restaurant Assistant Data Pipeline
 
 An end-to-end data engineering pipeline for restaurant data.
@@ -24,4 +23,3 @@ An end-to-end data engineering pipeline for restaurant data.
 ## Project Status
 
 Under development.
-"@ | Set-Content README.md
