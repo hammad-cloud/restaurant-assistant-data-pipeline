@@ -114,3 +114,47 @@ def test_positive_quantity_is_accepted():
 
     # Confirm that no records were rejected
     assert len(rejected_records) == 0
+
+# ==========================================
+# 6. MENU PRICE VALIDATION TEST
+# ==========================================
+
+def test_invalid_menu_prices_are_rejected():
+
+    # Create sample menu records
+    menu_df = pd.DataFrame({
+        "Menu_ID": ["MENU001", "MENU002", "MENU003", "MENU004"],
+        "Item_Name": [
+            "Chicken Biryani",
+            "Beef Biryani",
+            "Chicken Karahi",
+            "Mutton Karahi"
+        ],
+        "Base_Price_PKR": [450, 0, -200, None]
+    })
+
+    # Validate menu prices
+    invalid_records = validate_positive_values(
+        menu_df,
+        "Base_Price_PKR"
+    )
+
+    # Verify that three invalid records are rejected
+    assert len(invalid_records) == 3
+
+    # Verify that every rejected record has a reason
+    assert "rejection_reason" in invalid_records.columns
+
+    # Verify the exact rejected menu records
+    assert invalid_records["Menu_ID"].tolist() == [
+        "MENU002",
+        "MENU003",
+        "MENU004"
+    ]
+
+    # Verify the rejection reasons
+    assert invalid_records["rejection_reason"].tolist() == [
+        "Base_Price_PKR cannot be zero.",
+        "Base_Price_PKR cannot be negative.",
+        "Base_Price_PKR is missing."
+    ]
