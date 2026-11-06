@@ -109,7 +109,9 @@ print(inventory_df.columns.tolist())
 required_recipe_columns = [
     "Menu_ID",
     "Ingredient_ID",
-    "Qty_Per_Portion"
+    "Qty_Per_Portion",
+    "PECHS_Available",
+    "Gulshan_Available"
 ]
 
 # Validate the structure of the Menu_Items dataset
