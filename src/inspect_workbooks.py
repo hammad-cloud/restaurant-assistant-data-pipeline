@@ -3,6 +3,9 @@
 # 1. IMPORTS
 # ==========================================
 
+# Import Path to build file paths from the project folder
+from pathlib import Path
+
 # Import Pandas for Excel reading and data analysis
 import pandas as pd
 
@@ -31,9 +34,16 @@ from validation.menu_schema import required_menu_columns
 # 2. WORKBOOK FILE PATHS
 # ==========================================
 
+# Locate the project folder (one level above src/), so the script
+# works no matter which folder it is run from
+project_root = Path(__file__).resolve().parent.parent
+
 # Define the file paths for both restaurant workbooks
-menu_file = "data/raw/kRpfYv.xlsx"
-inventory_file = "data/raw/mMcHmK.xlsx"
+menu_file = project_root / "data" / "raw" / "kRpfYv.xlsx"
+inventory_file = project_root / "data" / "raw" / "mMcHmK.xlsx"
+
+# Define the folder for rejected records
+rejected_dir = project_root / "data" / "rejected"
 
 
 # ==========================================
@@ -347,7 +357,8 @@ if not rejected_menu_prices.empty:
 # Save rejected menu records
 menu_price_rejection_file = save_rejected_records(
     rejected_menu_prices,
-    "menu_prices"
+    "menu_prices",
+    output_dir=str(rejected_dir)
 )
 
 # Display the saved file location
@@ -401,7 +412,8 @@ if not rejected_records.empty:
 # Save rejected recipe records into a CSV file
 rejected_file = save_rejected_records(
     rejected_records,
-    "recipes"
+    "recipes",
+    output_dir=str(rejected_dir)
 )
 
 # Display the saved file location
