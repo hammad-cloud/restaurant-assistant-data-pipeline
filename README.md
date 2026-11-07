@@ -53,6 +53,10 @@ is removed when its check finds nothing.
 The validated menu is saved with a `record_hash` column to `data/processed/menu_items.csv`.
 The first run saves a baseline; later runs report new, changed, unchanged and removed menu records.
 
+Each run appends its progress to `data/logs/restaurant_pipeline.log` and prints it to the terminal.
+If the pipeline fails unexpectedly, the full traceback is logged as `CRITICAL`, the run exits with a
+non-zero status, and no success message is written. Stopping a run with Ctrl+C is not logged as a failure.
+
 Run the tests:
 
 ```powershell

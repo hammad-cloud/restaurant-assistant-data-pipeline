@@ -3,10 +3,16 @@
 # 1. IMPORTS
 # ==========================================
 
+# Import sys to register centralized exception handling.
+import sys
+
 # Import Path to build file paths from the project folder
 from pathlib import Path
 
-from logging_config import configure_logging
+from logging_config import (
+    configure_logging,
+    handle_uncaught_exception
+)
 
 # Import Pandas for Excel reading and data analysis
 import pandas as pd
@@ -63,6 +69,16 @@ project_root = Path(__file__).resolve().parent.parent
 
 # Configure logging for the restaurant data pipeline.
 logger = configure_logging(project_root)
+
+# Register centralized handling for unexpected pipeline exceptions.
+sys.excepthook = lambda exception_type, exception, traceback: (
+    handle_uncaught_exception(
+        exception_type,
+        exception,
+        traceback,
+        logger
+    )
+)
 
 # Record the start of each pipeline execution.
 logger.info("Restaurant data pipeline started.")

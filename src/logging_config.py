@@ -6,6 +6,9 @@
 # Import logging to record pipeline events and errors.
 import logging
 
+# Import sys to pass user interruptions to Python's default handler.
+import sys
+
 # Import Path to manage project directories.
 from pathlib import Path
 
@@ -67,3 +70,39 @@ def configure_logging(project_root: Path) -> logging.Logger:
         logger.addHandler(console_handler)
 
     return logger
+
+
+# ==========================================
+# 3. UNEXPECTED EXCEPTION HANDLING
+# ==========================================
+
+def handle_uncaught_exception(
+    exception_type,
+    exception,
+    traceback,
+    logger: logging.Logger
+) -> None:
+    """
+    Log unexpected exceptions with their complete traceback.
+
+    Args:
+        exception_type: Type of the uncaught exception.
+        exception: The exception instance.
+        traceback: Traceback information for the exception.
+        logger: Configured pipeline logger.
+    """
+
+    # Let Ctrl+C stop the pipeline normally instead of logging a failure.
+    if issubclass(exception_type, KeyboardInterrupt):
+        sys.__excepthook__(exception_type, exception, traceback)
+        return
+
+    # Record the exception and its complete traceback.
+    logger.critical(
+        "Unexpected pipeline failure.",
+        exc_info=(
+            exception_type,
+            exception,
+            traceback
+        )
+    )
