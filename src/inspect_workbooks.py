@@ -69,12 +69,6 @@ rejected_dir = project_root / "data" / "rejected"
 # Define the file for the latest processed menu snapshot
 menu_snapshot_file = project_root / "data" / "processed" / "menu_items.csv"
 
-# Define the file for the latest processed recipe snapshot
-recipe_snapshot_file = project_root / "data" / "processed" / "recipes.csv"
-
-# Define the columns that identify one recipe record
-recipe_id_columns = ["Menu_ID", "Ingredient_ID"]
-
 
 # ==========================================
 # 3. WORKBOOK INSPECTION
@@ -502,7 +496,7 @@ inventory_df["Qty_Per_Portion"] = pd.to_numeric(inventory_df["Qty_Per_Portion"])
 # Reject recipe records with a missing or blank Menu_ID or Ingredient_ID
 inventory_df = quarantine_records(
     inventory_df,
-    validate_required_values(inventory_df, recipe_id_columns),
+    validate_required_values(inventory_df, ["Menu_ID", "Ingredient_ID"]),
     "recipe_missing_ids",
     output_dir=str(rejected_dir)
 )
@@ -510,7 +504,7 @@ inventory_df = quarantine_records(
 # Reject every copy of a repeated Menu_ID + Ingredient_ID combination
 inventory_df = quarantine_records(
     inventory_df,
-    validate_unique_values(inventory_df, recipe_id_columns),
+    validate_unique_values(inventory_df, ["Menu_ID", "Ingredient_ID"]),
     "recipe_duplicates",
     output_dir=str(rejected_dir)
 )
@@ -550,7 +544,6 @@ for column in columns_to_inspect:
 # Define each dataset to track: name, data, hashed columns, ID, snapshot file
 tracked_datasets = [
     ("menu", menu_df, required_menu_columns, "Menu_ID", menu_snapshot_file),
-    ("recipe", inventory_df, required_recipe_columns, recipe_id_columns, recipe_snapshot_file),
 ]
 
 for name, df, hash_columns, id_column, snapshot_file in tracked_datasets:
