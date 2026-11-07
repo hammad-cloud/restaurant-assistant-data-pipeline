@@ -99,6 +99,13 @@ print("Inventory worksheets:", inventory_excel.sheet_names)
 # Read the Menu_Items worksheet into a Pandas DataFrame
 menu_df = pd.read_excel(menu_file, sheet_name="Menu_Items")
 
+
+# Record successful menu workbook loading.
+logger.info(
+    "Menu workbook loaded: %s records from Menu_Items worksheet.",
+    len(menu_df)
+)
+
 # ==========================================
 # 5. MENU DATA PREVIEW
 # ==========================================
@@ -125,6 +132,13 @@ inventory_df = pd.read_excel(
     inventory_file,
     sheet_name="Recipes"
 )
+
+# Record successful inventory workbook loading.
+logger.info(
+    "Inventory workbook loaded: %s records from Recipes worksheet.",
+    len(inventory_df)
+)
+
 
 
 # ==========================================
@@ -392,6 +406,14 @@ print("\nMenu Price Validation:")
 print("Valid menu records:", len(valid_menu_records))
 print("Rejected menu records:", len(rejected_menu_prices))
 
+# Record menu validation results in the pipeline log.
+logger.info(
+    "Menu price validation completed: %s valid, %s rejected.",
+    len(valid_menu_records),
+    len(rejected_menu_prices)
+)
+
+
 # Display rejected menu records with their reasons
 if not rejected_menu_prices.empty:
     print("\nRejected Menu Prices:")
@@ -423,7 +445,12 @@ menu_df["Base_Price_PKR"] = pd.to_numeric(menu_df["Base_Price_PKR"])
 # 21b. MENU ID QUARANTINE
 # ==========================================
 
+
 # Reject menu records with a missing or blank Menu_ID
+
+# Capture the record count before missing-ID quarantine.
+menu_records_before_quarantine = len(menu_df)
+
 menu_df = quarantine_records(
     menu_df,
     validate_required_values(menu_df, "Menu_ID"),
@@ -431,12 +458,31 @@ menu_df = quarantine_records(
     output_dir=str(rejected_dir)
 )
 
+# Record missing-ID quarantine results.
+logger.info(
+    "Menu missing-ID quarantine: %s kept, %s rejected.",
+    len(menu_df),
+    menu_records_before_quarantine - len(menu_df)
+)
+
+
 # Reject every copy of a repeated Menu_ID (after IDs were standardized)
+
+# Capture the record count before duplicate quarantine.
+menu_records_before_duplicates = len(menu_df)
+
 menu_df = quarantine_records(
     menu_df,
     validate_unique_values(menu_df, "Menu_ID"),
     "menu_duplicates",
     output_dir=str(rejected_dir)
+)
+
+# Record duplicate quarantine results.
+logger.info(
+    "Menu duplicate quarantine: %s kept, %s rejected.",
+    len(menu_df),
+    menu_records_before_duplicates - len(menu_df)
 )
 
 
@@ -466,6 +512,14 @@ print("\nValid recipe records:", len(valid_records))
 
 # Display the number of rejected records
 print("Rejected recipe records:", len(rejected_records))
+
+# Record recipe validation results in the pipeline log.
+logger.info(
+    "Recipe quantity validation completed: %s valid, %s rejected.",
+    len(valid_records),
+    len(rejected_records)
+)
+
 
 # Display rejected records with their rejection reasons
 if not rejected_records.empty:
@@ -502,7 +556,10 @@ inventory_df["Qty_Per_Portion"] = pd.to_numeric(inventory_df["Qty_Per_Portion"])
 # 24b. RECIPE ID AND MENU LINK QUARANTINE
 # ==========================================
 
-# Reject recipe records with a missing or blank Menu_ID or Ingredient_ID
+# Capture recipe record count before missing-ID quarantine.
+recipe_records_before_missing_ids = len(inventory_df)
+
+# Reject recipe records with a missing or blank Menu_ID or Ingredient_ID.
 inventory_df = quarantine_records(
     inventory_df,
     validate_required_values(inventory_df, ["Menu_ID", "Ingredient_ID"]),
@@ -510,7 +567,18 @@ inventory_df = quarantine_records(
     output_dir=str(rejected_dir)
 )
 
-# Reject every copy of a repeated Menu_ID + Ingredient_ID combination
+# Record recipe missing-ID quarantine results.
+logger.info(
+    "Recipe missing-ID quarantine: %s kept, %s rejected.",
+    len(inventory_df),
+    recipe_records_before_missing_ids - len(inventory_df)
+)
+
+
+# Capture recipe record count before duplicate quarantine.
+recipe_records_before_duplicates = len(inventory_df)
+
+# Reject every copy of a repeated Menu_ID + Ingredient_ID combination.
 inventory_df = quarantine_records(
     inventory_df,
     validate_unique_values(inventory_df, ["Menu_ID", "Ingredient_ID"]),
@@ -518,13 +586,30 @@ inventory_df = quarantine_records(
     output_dir=str(rejected_dir)
 )
 
-# Reject recipes whose menu item is not in the final validated menu
-# (this runs after all menu checks, so recipes of rejected items are caught)
+# Record recipe duplicate quarantine results.
+logger.info(
+    "Recipe duplicate quarantine: %s kept, %s rejected.",
+    len(inventory_df),
+    recipe_records_before_duplicates - len(inventory_df)
+)
+
+# Capture recipe record count before orphan quarantine.
+recipe_records_before_orphans = len(inventory_df)
+
+# Reject recipes whose menu item is not in the final validated menu.
+# This catches recipes linked to menu items rejected during validation.
 inventory_df = quarantine_records(
     inventory_df,
     validate_foreign_keys(inventory_df, "Menu_ID", menu_df["Menu_ID"], "validated menu"),
     "recipe_orphans",
     output_dir=str(rejected_dir)
+)
+
+# Record recipe orphan quarantine results.
+logger.info(
+    "Recipe orphan quarantine: %s kept, %s rejected.",
+    len(inventory_df),
+    recipe_records_before_orphans - len(inventory_df)
 )
 
 # ==========================================
@@ -563,6 +648,23 @@ for name, df, hash_columns, id_column, snapshot_file in tracked_datasets:
     # Compare with the previous snapshot, then save the new snapshot
     changes = update_snapshot(hashed_df, snapshot_file, id_column)
 
+    # Record the snapshot processing result.
+    if changes is None:
+        logger.info(
+            "%s baseline snapshot created: %s",
+            name.capitalize(),
+            snapshot_file
+        )
+    else:
+        logger.info(
+            "%s snapshot updated: %s new, %s changed, %s unchanged, %s removed.",
+            name.capitalize(),
+            len(changes["new"]),
+            len(changes["changed"]),
+            len(changes["unchanged"]),
+            len(changes["removed"])
+        )
+
     # Report the baseline on the first run
     if changes is None:
         print(f"\nNo previous {name} snapshot found.")
@@ -574,3 +676,6 @@ for name, df, hash_columns, id_column, snapshot_file in tracked_datasets:
         for change_type in ["new", "changed", "unchanged", "removed"]:
             print(f"{change_type.capitalize()} {name} records:", len(changes[change_type]))
         print(f"{name.capitalize()} snapshot updated:", snapshot_file)
+
+# Record successful completion of the pipeline.
+logger.info("Restaurant data pipeline completed successfully.")
