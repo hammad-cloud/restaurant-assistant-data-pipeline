@@ -54,6 +54,7 @@ The validated menu is saved with a `record_hash` column to `data/processed/menu_
 The first run saves a baseline; later runs report new, changed, unchanged and removed menu records.
 
 Each run appends its progress to `data/logs/restaurant_pipeline.log` and prints it to the terminal.
+The log starts a new file at 1 MB and keeps the 5 most recent old files (`.log.1` to `.log.5`).
 If the pipeline fails unexpectedly, the full traceback is logged as `CRITICAL`, the run exits with a
 non-zero status, and no success message is written. Stopping a run with Ctrl+C is not logged as a failure.
 

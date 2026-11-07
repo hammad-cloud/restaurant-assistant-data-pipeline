@@ -6,6 +6,9 @@
 # Import logging to record pipeline events and errors.
 import logging
 
+# Import RotatingFileHandler to cap the size of the log file.
+from logging.handlers import RotatingFileHandler
+
 # Import sys to pass user interruptions to Python's default handler.
 import sys
 
@@ -52,9 +55,11 @@ def configure_logging(project_root: Path) -> logging.Logger:
             datefmt="%Y-%m-%d %H:%M:%S"
         )
 
-        # Create a handler that writes logs to a file.
-        file_handler = logging.FileHandler(
+        # Write logs to a file, starting a new one at 1 MB and keeping 5 old files.
+        file_handler = RotatingFileHandler(
             log_file,
+            maxBytes=1_000_000,
+            backupCount=5,
             encoding="utf-8"
         )
 
