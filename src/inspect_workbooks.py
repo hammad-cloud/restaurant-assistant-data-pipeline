@@ -6,6 +6,8 @@
 # Import Path to build file paths from the project folder
 from pathlib import Path
 
+from logging_config import configure_logging
+
 # Import Pandas for Excel reading and data analysis
 import pandas as pd
 
@@ -58,6 +60,13 @@ from tracking.snapshot_manager import update_snapshot
 # Locate the project folder (one level above src/), so the script
 # works no matter which folder it is run from
 project_root = Path(__file__).resolve().parent.parent
+
+# Configure logging for the restaurant data pipeline.
+logger = configure_logging(project_root)
+
+# Record the start of each pipeline execution.
+logger.info("Restaurant data pipeline started.")
+
 
 # Define the file paths for both restaurant workbooks
 menu_file = project_root / "data" / "raw" / "kRpfYv.xlsx"

@@ -22,3 +22,6 @@ data/rejected/
 
 # Generated processed snapshots
 data/processed/
+
+# Generated pipeline logs
+data/logs/
