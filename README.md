@@ -40,6 +40,12 @@ An end-to-end data engineering pipeline for restaurant data.
 
 ## Database Configuration
 
+One-time setup (creates the app user and both databases; asks for passwords, stores none):
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -f scripts/setup_database.sql
+```
+
 The PostgreSQL connection module (`src/database/connection.py`) reads its settings
 from environment variables. `.env.example` lists them; nothing loads a `.env` file.
 Set them in your PowerShell session (the password prompt keeps it off screen and out of history):
