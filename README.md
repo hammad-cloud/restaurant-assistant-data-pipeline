@@ -38,6 +38,21 @@ An end-to-end data engineering pipeline for restaurant data.
 3. Place the source Excel workbooks in `data/raw/`
    (`kRpfYv.xlsx` and `mMcHmK.xlsx`). They are not stored in Git.
 
+## Database Configuration
+
+The PostgreSQL connection module (`src/database/connection.py`) reads its settings
+from environment variables. `.env.example` lists them; nothing loads a `.env` file.
+Set them in your PowerShell session (the password prompt keeps it off screen and out of history):
+
+```powershell
+$env:PGHOST = "localhost"
+$env:PGPORT = "5432"
+$env:PGUSER = "restaurant_assistant_app"
+$env:PGDATABASE = "restaurant_assistant"
+$env:PGDATABASE_TEST = "restaurant_assistant_test"
+$env:PGPASSWORD = [Net.NetworkCredential]::new("", (Read-Host "PostgreSQL password" -AsSecureString)).Password
+```
+
 ## Usage
 
 Run the pipeline:
