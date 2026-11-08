@@ -25,3 +25,9 @@ data/processed/
 
 # Generated pipeline logs
 data/logs/
+
+# Disposable ETL working copies of source files
+data/working/
+
+# Source backups, if RESTAURANT_BACKUP_DIR points inside the repo
+*-backups/

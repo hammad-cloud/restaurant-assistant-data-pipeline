@@ -3,6 +3,9 @@
 # 1. IMPORTS
 # ==========================================
 
+# Import os to read the optional backup folder setting.
+import os
+
 # Import sys to register centralized exception handling.
 import sys
 
@@ -58,6 +61,9 @@ from tracking.record_hasher import add_record_hash
 # Import the snapshot comparison and storage function
 from tracking.snapshot_manager import update_snapshot
 
+# Import the source backup and working copy function
+from ingestion.source_backup import prepare_working_copy
+
 
 # ==========================================
 # 2. WORKBOOK FILE PATHS
@@ -87,6 +93,22 @@ logger.info("Restaurant data pipeline started.")
 # Define the file paths for both restaurant workbooks
 menu_file = project_root / "data" / "raw" / "kRpfYv.xlsx"
 inventory_file = project_root / "data" / "raw" / "mMcHmK.xlsx"
+
+# Store immutable backups outside the Git repository by default
+backup_dir = Path(os.environ.get(
+    "RESTAURANT_BACKUP_DIR",
+    project_root.parent / "restaurant-assistant-backups"
+))
+
+# Define the folder for disposable working copies
+working_dir = project_root / "data" / "working"
+
+# Back up each source file, then process only its working copy
+menu_file = prepare_working_copy(menu_file, backup_dir, working_dir)
+inventory_file = prepare_working_copy(inventory_file, backup_dir, working_dir)
+
+# Record the backup step (paths only, no file contents)
+logger.info("Source files backed up to %s; working copies in %s.", backup_dir, working_dir)
 
 # Define the folder for rejected records
 rejected_dir = project_root / "data" / "rejected"
