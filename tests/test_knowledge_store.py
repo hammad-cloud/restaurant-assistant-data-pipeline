@@ -2,6 +2,9 @@
 # 1. IMPORTS
 # ==========================================
 
+# Import SimpleNamespace for a minimal fake query result
+from types import SimpleNamespace
+
 # Import pytest for fixtures, skips, and exception checks
 import pytest
 
@@ -18,6 +21,7 @@ from knowledge.knowledge_builder import make_entry
 from knowledge.knowledge_store import (
     MIN_SCORE,
     create_knowledge_table,
+    keyword_search,
     prefer_opening_hours,
     refresh_embeddings,
     refresh_knowledge,
@@ -264,3 +268,59 @@ def test_hours_entry_must_be_trusted_and_for_the_same_branch():
     assert prefer_opening_hours("open now?", other_branch)[0] == "branch:UTG-KHI-002:location"
     # Only a location answer is ever swapped
     assert prefer_opening_hours("biryani now?", not_location)[0] == "menu:MENU001"
+
+
+# ==========================================
+# KEYWORD FALLBACK IGNORES COMMON WORDS (no database)
+# ==========================================
+
+class QueryRecorder:
+    """Records the tsquery text keyword_search sends; returns no rows."""
+
+    def __init__(self):
+        self.queries = []
+
+    def execute(self, sql, params):
+        self.queries.append(params[0])
+        return SimpleNamespace(fetchall=lambda: [])
+
+
+@pytest.mark.parametrize("question, tsquery", [
+    ("Can I come to Gulshan tonight?", "come | gulshan | tonight"),   # "can" matched "soft drink can"
+    ("Gulshan ki timing kya hai?", "gulshan | timing"),               # "ki" matched "pani ki bottle"
+    ("Is all food halal?", "food | halal"),                          # "all" matched "All items"
+    ("Gulshan-e-Iqbal address", "gulshan | iqbal | address"),        # single letters dropped
+    ("chikkan biryani milega?", "chikkan | biryani | milega"),       # customer phrases kept
+    ("soft drink can", "soft | drink"),
+    ("bbq tea ice", "bbq | tea | ice"),                              # short food words kept
+    ("chow mein milega?", "chow | milega"),                          # "chow" still finds Chicken Chow Mein
+])
+def test_keyword_search_drops_common_words(question, tsquery):
+
+    recorder = QueryRecorder()
+    keyword_search(recorder, question)
+
+    assert recorder.queries == [tsquery]
+
+
+def test_keyword_search_with_only_common_words_does_not_query():
+
+    recorder = QueryRecorder()
+
+    assert keyword_search(recorder, "Can I? Is it? kya hai") == []
+    assert recorder.queries == []
+
+
+def test_keyword_search_common_words_do_not_match_in_database(conn):
+
+    refresh_knowledge(conn, [
+        make_entry("menu:MENU031", "menu_item", "What is Mineral Water?", "Mineral Water. Price 100 PKR.",
+                   "test", "approved", keywords="mineral water pani ki bottle"),
+        make_entry("menu:MENU032", "menu_item", "What is Soft Drink Can?", "Soft Drink Can. Price 150 PKR.",
+                   "test", "approved", keywords="soft drink can"),
+    ])
+
+    assert keyword_search(conn, "Can I come to Gulshan tonight?") == []
+    assert keyword_search(conn, "Gulshan ki timing kya hai?") == []
+    assert [row[0] for row in keyword_search(conn, "pani ki bottle")] == ["menu:MENU031"]
+    assert [row[0] for row in keyword_search(conn, "soft drink chahiye")] == ["menu:MENU032"]

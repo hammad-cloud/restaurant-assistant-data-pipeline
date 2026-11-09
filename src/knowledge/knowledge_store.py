@@ -211,6 +211,62 @@ def search_knowledge(conn, query, embed, limit=5, branch_id=None):
 MIN_SCORE = 0.45
 
 
+# Question words that carry no meaning on their own, in English and Roman Urdu.
+# The 'simple' text search config has no stopword list, so they are removed here.
+# shortcut: fixed list; check new customer phrases against it when aliases are added
+KEYWORD_STOPWORDS = {
+    # English
+    "a", "about", "all", "am", "an", "and", "any", "are", "at", "be", "can", "could",
+    "did", "do", "does", "for", "from", "get", "have", "has", "how", "i", "in", "is",
+    "it", "many", "me", "much", "my", "of", "on", "or", "please", "some", "tell",
+    "the", "there", "this", "to", "we", "what", "when", "where", "which", "will",
+    "with", "would", "you", "your",
+    # Roman Urdu
+    "aap", "aur", "bhi", "hai", "hain", "ka", "kab", "kahan", "ke", "ki", "kitna",
+    "kitne", "ko", "kya", "main", "mein", "se",
+}
+
+
+def keyword_words(query):
+    """
+    The words of query that keyword search looks for.
+    Letters and digits only, so the text is a safe tsquery; common words are
+    dropped so "can" in "Can I come?" does not match "soft drink can".
+    """
+
+    return [w for w in re.findall(r"\w+", query.lower()) if len(w) > 1 and w not in KEYWORD_STOPWORDS]
+
+
+def keyword_search(conn, query, limit=5, branch_id=None):
+    """
+    Find entries whose customer phrases (keywords) contain any word of
+    query, best ranked first, as (entry_id, question, answer, status, rank).
+    Catches Roman Urdu phrases such as "chikkan biryani" that the English
+    embedding model scores weakly. Question and answer text is left out,
+    so a common word like "sell" in "do you sell cars" does not match.
+    branch_id keeps entries for that branch plus entries for all branches.
+    """
+
+    words = keyword_words(query)
+    if not words:
+        return []
+
+    # shortcut: keywords tsvector computed per query (no index); fine for a few thousand entries
+    sql = (
+        "SELECT entry_id, question, answer, status, "
+        "ts_rank(to_tsvector('simple', keywords), q) AS rank "
+        "FROM knowledge_entries, to_tsquery('simple', %s) AS q "
+        "WHERE to_tsvector('simple', keywords) @@ q"
+    )
+    params = [" | ".join(words)]
+    if branch_id is not None:
+        sql += " AND (branch_id = %s OR branch_id IS NULL)"
+        params.append(branch_id)
+
+    # entry_id breaks rank ties, so equal matches never come back in arbitrary order
+    return conn.execute(sql + " ORDER BY rank DESC, entry_id LIMIT %s", [*params, limit]).fetchall()
+
+
 # Words that ask whether a branch is open, not where it is ("visit" and "go" alone are not enough)
 OPEN_STATUS_WORDS = {
     "now", "tonight", "open", "opening", "operating",
