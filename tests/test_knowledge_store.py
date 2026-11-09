@@ -15,7 +15,11 @@ from database.connection import DatabaseConfigurationError, connect_to_test_data
 from knowledge.knowledge_builder import make_entry
 
 # Import the knowledge store functions
-from knowledge.knowledge_store import create_knowledge_table, refresh_knowledge
+from knowledge.knowledge_store import (
+    create_knowledge_table,
+    refresh_embeddings,
+    refresh_knowledge,
+)
 
 
 # ==========================================
@@ -160,3 +164,32 @@ def test_search_vector_covers_customer_phrases(conn):
     ).fetchall()
 
     assert rows == [("menu:MENU001",)]
+
+
+# ==========================================
+# 4. EMBEDDING TESTS
+# ==========================================
+
+def fake_embed(texts):
+
+    # Deterministic 3-number "embeddings": hours, biryani, sales
+    return [
+        [float("hours" in text or "open" in text), float("biryani" in text.lower()), float("sales" in text.lower())]
+        for text in texts
+    ]
+
+
+def test_embeddings_created_once_and_redone_only_for_changed_entries(conn):
+
+    refresh_knowledge(conn, sample_entries())
+    assert refresh_embeddings(conn, fake_embed, "fake") == 3
+
+    # Nothing changed: nothing embedded again
+    assert refresh_embeddings(conn, fake_embed, "fake") == 0
+
+    # One changed entry: only it is embedded again
+    refresh_knowledge(conn, sample_entries(hours="from 9 am to 11 pm"))
+    assert refresh_embeddings(conn, fake_embed, "fake") == 1
+
+    # A different model re-embeds everything
+    assert refresh_embeddings(conn, fake_embed, "fake-v2") == 3

@@ -49,6 +49,11 @@ CREATE INDEX IF NOT EXISTS knowledge_entries_search_idx
     ON knowledge_entries USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS knowledge_entries_topic_branch_idx
     ON knowledge_entries (topic, branch_id);
+-- Added after the first release, so existing tables gain them too.
+-- shortcut: REAL[] + NumPy search instead of pgvector (not installed on this Windows PostgreSQL);
+-- switch to a vector(384) column with an HNSW index if entries grow past ~100k.
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding REAL[];
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding_model TEXT;
 """
 
 UPSERT_SQL = f"""
@@ -56,7 +61,10 @@ INSERT INTO knowledge_entries ({", ".join(ENTRY_COLUMNS)})
 VALUES ({", ".join(["%s"] * len(ENTRY_COLUMNS))})
 ON CONFLICT (entry_id) DO UPDATE SET
     {", ".join(f"{column} = EXCLUDED.{column}" for column in ENTRY_COLUMNS[1:])},
-    updated_at = now()
+    updated_at = now(),
+    -- Changed content needs a new embedding
+    embedding = NULL,
+    embedding_model = NULL
 """
 
 
@@ -121,3 +129,45 @@ def refresh_knowledge(conn, entries):
         *(len(changes[kind]) for kind in ("new", "changed", "unchanged", "removed")),
     )
     return changes
+
+
+# ==========================================
+# 4. DOCUMENT EMBEDDINGS
+# ==========================================
+
+def document_text(question, answer, keywords):
+    """
+    The text embedded for one entry: question, answer and customer phrases.
+    """
+
+    return "\n".join(part for part in (question, answer, keywords) if part)
+
+
+def refresh_embeddings(conn, embed, model_name):
+    """
+    Embed every entry that has no embedding yet, or one made by another model.
+    New and changed entries lose their embedding in refresh_knowledge,
+    so only they are embedded again.
+
+    embed takes a list of texts and returns one list of floats per text.
+    Returns the number of entries embedded.
+    """
+
+    with conn.transaction():
+        rows = conn.execute(
+            "SELECT entry_id, question, answer, keywords FROM knowledge_entries "
+            "WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM %s",
+            [model_name],
+        ).fetchall()
+
+        if rows:
+            vectors = embed([document_text(*row[1:]) for row in rows])
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    "UPDATE knowledge_entries SET embedding = %s, embedding_model = %s "
+                    "WHERE entry_id = %s",
+                    [(list(map(float, vector)), model_name, row[0]) for row, vector in zip(rows, vectors)],
+                )
+
+    logger.info("Embeddings refreshed: %s entries embedded with %s.", len(rows), model_name)
+    return len(rows)
