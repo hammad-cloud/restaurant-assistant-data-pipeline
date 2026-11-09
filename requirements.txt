@@ -7,3 +7,8 @@ psycopg[binary]==3.3.8
 
 # Automated testing
 pytest==9.2.0
+
+# Document embeddings (local model, CPU)
+numpy==2.5.4
+sentence-transformers==6.2.0
+torch==2.15.0
