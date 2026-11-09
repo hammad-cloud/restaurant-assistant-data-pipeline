@@ -6,8 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from database.connection import DatabaseConfigurationError, connect_to_test_database
+from knowledge.knowledge_builder import make_entry
 from knowledge.knowledge_store import (
     NOT_FOUND_ANSWER,
+    answer_question,
+    create_knowledge_table,
+    refresh_embeddings,
+    refresh_knowledge,
 )
 from knowledge.quick_answers import QuickAnswers, normalize_question
 
@@ -250,3 +256,120 @@ def test_warm_preloads_only_confident_frequent_questions():
     assert quick.ask("unknown thing")[3] is False
     # Canonical questions are still warmed without a search
     assert quick.ask("What is Chicken Biryani?")[3] is True
+
+
+# ==========================================
+# 3. DATABASE TESTS (test database only)
+# ==========================================
+
+def fake_embed(texts):
+
+    # Deterministic 3-number "embeddings": hours, biryani, sales
+    return [
+        [float("hours" in t or "open" in t), float("biryani" in t.lower()), float("sales" in t.lower())]
+        for t in texts
+    ]
+
+
+@pytest.fixture
+def conn():
+
+    try:
+        connection = connect_to_test_database()
+    except DatabaseConfigurationError:
+        pytest.skip("Test database settings (PG* variables) are not set.")
+
+    connection.autocommit = True
+    connection.execute("DROP TABLE IF EXISTS knowledge_entries")
+    connection.execute("DROP TABLE IF EXISTS question_log")
+    create_knowledge_table(connection)
+    refresh_knowledge(connection, [
+        make_entry("branch:UTG-KHI-002:hours", "opening_hours",
+                   "What are the opening hours of the Gulshan-e-Iqbal branch?",
+                   "The Gulshan-e-Iqbal branch is open 24/7.", "test", "approved",
+                   branch_id="UTG-KHI-002"),
+        make_entry("menu:MENU001", "menu_item", "What is Chicken Biryani?",
+                   "Chicken Biryani (Pakistani). Price 420 PKR.", "test", "approved",
+                   keywords="chicken biryani chikkan biryani"),
+        make_entry("menu:MENU002", "menu_item", "What is Mutton Karahi?",
+                   "Mutton Karahi. Price 900 PKR.", "test", "pending",
+                   keywords="mutton karahi"),
+    ])
+    refresh_embeddings(connection, fake_embed, "fake")
+
+    yield connection
+    connection.execute("DROP TABLE IF EXISTS question_log")
+    connection.close()
+
+
+def test_answer_by_meaning_keyword_and_not_found(conn):
+
+    assert answer_question(conn, "when are you open", fake_embed)[1:] == ("branch:UTG-KHI-002:hours", "meaning")
+
+    # No meaning match, but the Roman Urdu phrase is in the keywords
+    answer, entry_id, method = answer_question(conn, "chikkan milega?", fake_embed)
+    assert (entry_id, method) == ("menu:MENU001", "keyword")
+    assert "not confirmed" not in answer
+
+    answer, entry_id, method = answer_question(conn, "karahi milega?", fake_embed)
+    assert (entry_id, method) == ("menu:MENU002", "keyword")
+    assert "not confirmed" in answer  # pending entries carry a note
+
+    assert answer_question(conn, "do you sell cars", fake_embed) == (NOT_FOUND_ANSWER, None, "none")
+
+
+def test_warm_caches_knowledge_questions_without_searching(conn):
+
+    def fail(*args, **kwargs):
+        raise AssertionError("knowledge base searched for a warmed question")
+
+    quick = QuickAnswers(conn, fake_embed, answer_fn=fail)
+    quick.warm()
+
+    answer, entry_id, method, from_cache = quick.ask("what is chicken biryani")
+    assert (entry_id, method, from_cache) == ("menu:MENU001", "exact", True)
+    assert quick.ask("What are the opening hours of the Gulshan-e-Iqbal branch?",
+                     branch_id="UTG-KHI-002")[3] is True
+    assert all(hit[1] != "menu:MENU002" for hit in quick.cache.values())  # pending entry not preloaded
+
+
+def test_counts_are_saved_and_frequent_questions_warm_next_session(conn):
+
+    with QuickAnswers(conn, fake_embed) as quick:
+        for _ in range(3):
+            quick.ask("Biryani price?")
+        quick.ask("when are you open")
+
+    with QuickAnswers(conn, fake_embed) as quick:
+        quick.ask("biryani price")
+        assert quick.top_questions()[0] == ("Biryani price?", 4)
+
+    # A new session preloads the frequent question, so it is cached on first ask
+    quick = QuickAnswers(conn, fake_embed)
+    quick.warm()
+    assert quick.ask("biryani price")[3] is True
+
+
+def test_keyword_answers_cached_only_when_unambiguous_in_database(conn):
+
+    quick = QuickAnswers(conn, fake_embed)
+
+    # Every searched word is in the one matching entry's customer phrases
+    # (fake_embed scores "chikkan" 0 everywhere, so it reaches keyword search)
+    assert quick.ask("Chikkan?")[1:] == ("menu:MENU001", "keyword", False)
+    assert quick.ask("chikkan")[3] is True
+
+    # "milega" is not in its phrases: answered by keyword each time, never cached
+    for _ in range(2):
+        assert quick.ask("chikkan milega?")[1:] == ("menu:MENU001", "keyword", False)
+
+
+def test_pending_keyword_answer_is_never_cached_in_database(conn):
+
+    quick = QuickAnswers(conn, fake_embed)
+
+    # "karahi" is among the pending entry's phrases, so only its status blocks caching
+    for _ in range(2):
+        answer, entry_id, method, from_cache = quick.ask("karahi")
+        assert (entry_id, method, from_cache) == ("menu:MENU002", "keyword", False)
+        assert "not confirmed" in answer
