@@ -64,6 +64,23 @@ from tracking.snapshot_manager import update_snapshot
 # Import the source backup and working copy function
 from ingestion.source_backup import prepare_working_copy
 
+# Import the production database connection
+from database.connection import connect_to_production_database
+
+# Import the knowledge entry builder and PostgreSQL store
+from knowledge.knowledge_builder import build_knowledge_entries
+from knowledge.knowledge_store import (
+    create_knowledge_table,
+    refresh_embeddings,
+    refresh_knowledge,
+)
+
+# Import the local embedding model used for document embeddings
+from knowledge.embedder import MODEL_NAME, embed_texts
+
+# Import the structured table loader
+from loading.table_loader import load_all_tables
+
 
 # ==========================================
 # 2. WORKBOOK FILE PATHS
@@ -91,7 +108,11 @@ logger.info("Restaurant data pipeline started.")
 
 
 # Define the file paths for both restaurant workbooks
-menu_file = project_root / "data" / "raw" / "kRpfYv.xlsx"
+# RESTAURANT_MENU_FILE points at another menu workbook, for example the price-change demo copy
+menu_file = Path(os.environ.get(
+    "RESTAURANT_MENU_FILE",
+    project_root / "data" / "raw" / "kRpfYv.xlsx"
+))
 inventory_file = project_root / "data" / "raw" / "mMcHmK.xlsx"
 
 # Store immutable backups outside the Git repository by default
@@ -714,6 +735,134 @@ for name, df, hash_columns, id_column, snapshot_file in tracked_datasets:
         for change_type in ["new", "changed", "unchanged", "removed"]:
             print(f"{change_type.capitalize()} {name} records:", len(changes[change_type]))
         print(f"{name.capitalize()} snapshot updated:", snapshot_file)
+
+
+# ==========================================
+# 27. KNOWLEDGE BASE BUILD
+# ==========================================
+
+def build_knowledge():
+    """
+    Read the extra sheets the knowledge builder uses, check their columns,
+    and build entries from the validated menu.
+    """
+
+    aliases_df = pd.read_excel(menu_excel, sheet_name="Item_Aliases")
+    rules_df = pd.read_excel(menu_excel, sheet_name="Service_Rules")
+    branches_df = pd.read_excel(inventory_excel, sheet_name="Branches")
+
+    # Fail with a clear message if a column the builder uses is missing
+    validate_required_columns(aliases_df, ["Menu_ID", "Customer_Phrase"], "Item_Aliases")
+    validate_required_columns(
+        rules_df,
+        ["Rule_ID", "Rule_Name", "Value", "Applies_To", "Verification_Status", "Comment"],
+        "Service_Rules"
+    )
+    validate_required_columns(
+        branches_df,
+        ["Branch_ID", "Branch_Name", "Address_Demo", "Tables", "Seats", "Hours", "Status"],
+        "Branches"
+    )
+
+    return build_knowledge_entries(menu_df, aliases_df, branches_df, rules_df)
+
+
+# Steps that failed this run: step name -> error message.
+# A failed step keeps its previous data in the database and the later steps still run.
+failed_steps = {}
+
+
+def run_step(name, step):
+    """
+    Run one pipeline step; record and log a failure instead of stopping the run.
+    Returns the step's result, or None if it failed.
+    """
+
+    try:
+        return step()
+    except Exception as error:
+        failed_steps[name] = f"{type(error).__name__}: {error}"
+        logger.error("Step '%s' failed; its previous data is kept. %s", name, failed_steps[name])
+        return None
+
+
+# A missing or unreachable database stops the run: no step can work without it
+with connect_to_production_database() as db_conn:
+    # Each load step commits its own transaction only on an autocommit connection
+    db_conn.autocommit = True
+
+    # ==========================================
+    # 28. STRUCTURED TABLE LOAD
+    # ==========================================
+
+    # Load every data sheet into its own table; the validated menu and
+    # recipes replace their raw sheets, so rejected rows are not loaded.
+    # A failing sheet is rolled back and the other sheets still load.
+    table_changes, table_failures = load_all_tables(
+        db_conn,
+        menu_excel,
+        inventory_excel,
+        overrides={"Menu_Items": menu_df, "Recipes": inventory_df},
+    )
+    for sheet_name, message in table_failures.items():
+        failed_steps[f"table {sheet_name.lower()}"] = message
+
+    print("\nStructured Table Load (new / changed / unchanged / removed):")
+    for sheet_name, changes in table_changes.items():
+        print(f"{sheet_name.lower():<20}", " / ".join(
+            str(len(changes[kind])) for kind in ("new", "changed", "unchanged", "removed")
+        ))
+    for sheet_name in table_failures:
+        print(f"{sheet_name.lower():<20}", "FAILED (previous data kept)")
+
+    # ==========================================
+    # 29. KNOWLEDGE BASE REFRESH
+    # ==========================================
+
+    def refresh_knowledge_step():
+        entries = build_knowledge()
+        create_knowledge_table(db_conn)
+        return refresh_knowledge(db_conn, entries)
+
+    knowledge_changes = run_step("knowledge base", refresh_knowledge_step)
+
+    print("\nKnowledge Base Refresh:")
+    if knowledge_changes is None:
+        print("FAILED (previous knowledge entries kept)")
+    else:
+        for change_type in ["new", "changed", "unchanged", "removed"]:
+            print(f"{change_type.capitalize()} knowledge entries:", len(knowledge_changes[change_type]))
+
+    # ==========================================
+    # 30. DOCUMENT EMBEDDINGS
+    # ==========================================
+
+    # Only new and changed documents are embedded; this runs even if the
+    # knowledge step failed, so stored entries without embeddings still get them
+    embedded_count = run_step(
+        "document embeddings",
+        lambda: refresh_embeddings(db_conn, embed_texts, MODEL_NAME),
+    )
+    if embedded_count is None:
+        print("\nDocument embeddings: FAILED (will be retried on the next run)")
+    else:
+        print("\nDocument embeddings created:", embedded_count)
+
+
+# ==========================================
+# 31. RUN RESULT
+# ==========================================
+
+if failed_steps:
+    print(f"\nPipeline finished with {len(failed_steps)} failed step(s); everything else was loaded:")
+    for name, message in failed_steps.items():
+        print(f"  - {name}: {message}")
+    logger.error(
+        "Restaurant data pipeline finished with %s failed step(s): %s",
+        len(failed_steps), ", ".join(failed_steps),
+    )
+    # Non-zero exit so schedulers and scripts see the failure
+    sys.exit(1)
 
 # Record successful completion of the pipeline.
 logger.info("Restaurant data pipeline completed successfully.")
