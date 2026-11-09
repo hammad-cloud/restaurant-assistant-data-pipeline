@@ -31,3 +31,6 @@ data/working/
 
 # Source backups, if RESTAURANT_BACKUP_DIR points inside the repo
 *-backups/
+
+# Price-change demo copy and its backups
+data/demo/
