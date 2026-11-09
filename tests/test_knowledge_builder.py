@@ -10,6 +10,7 @@ from knowledge.knowledge_builder import (
     NO_SALES_DATA_ANSWER,
     build_knowledge_entries,
     make_entry,
+    menu_question_variations,
     rule_status,
 )
 
@@ -70,6 +71,7 @@ def test_branch_entries_carry_branch_metadata():
     hours = entries["branch:UTG-KHI-001:hours"]
 
     assert hours["topic"] == "opening_hours"
+    assert hours["question"] == "When is the PECHS branch open?"
     assert hours["branch_id"] == "UTG-KHI-001"
     assert "24/7" in hours["answer"]
 
@@ -102,6 +104,22 @@ def test_menu_entries_include_aliases_and_skip_draft_items():
     assert "chikkan biryani" in biryani["keywords"]
     assert "420 PKR" in biryani["answer"]
     assert "menu:MENU050" not in entries
+
+
+def test_menu_item_has_one_entry_and_its_question_variations():
+
+    entries = build_knowledge_entries(*sample_data())
+    biryani = [entry for entry in entries if "Biryani" in entry["question"]]
+
+    # One canonical entry; variations are derived from it, not stored
+    assert [entry["entry_id"] for entry in biryani] == ["menu:MENU001"]
+    assert biryani[0]["question"] == "What is Chicken Biryani?"
+    assert menu_question_variations(biryani[0]["question"]) == [
+        "What is the price of Chicken Biryani?",
+        "How much does Chicken Biryani cost?",
+        "Tell me about Chicken Biryani.",
+    ]
+    assert menu_question_variations("Where is the PECHS branch?") == []
 
 
 def test_top_10_reports_missing_sales_data_instead_of_using_menu():

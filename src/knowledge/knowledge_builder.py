@@ -66,7 +66,8 @@ def build_branch_entries(branches_df, source="mMcHmK.xlsx:Branches"):
         entries.append(make_entry(
             f"branch:{branch.Branch_ID}:hours",
             "opening_hours",
-            f"What are the opening hours of the {branch.Branch_Name} branch?",
+            # Worded this way so "Is X branch open now?" ranks hours above "Where is the X branch?"
+            f"When is the {branch.Branch_Name} branch open?",
             f"The {branch.Branch_Name} branch is open {branch.Hours}.",
             source, "approved", branch_id=branch.Branch_ID,
             keywords=f"{branch.Branch_Name} timings open close",
@@ -121,6 +122,28 @@ def build_service_rule_entries(rules_df, source="kRpfYv.xlsx:Service_Rules"):
 # 5. MENU DESCRIPTIONS
 # ==========================================
 
+# How customers ask about one menu item; the first is the stored canonical question
+MENU_QUESTION_TEMPLATES = (
+    "What is {}?",
+    "What is the price of {}?",
+    "How much does {} cost?",
+    "Tell me about {}.",
+)
+
+
+def menu_question_variations(question):
+    """
+    The other phrasings of a canonical menu question, answered by the same entry.
+    Returns [] for a question not built from the canonical template.
+    """
+
+    prefix, suffix = MENU_QUESTION_TEMPLATES[0].split("{}")
+    if not (question.startswith(prefix) and question.endswith(suffix)):
+        return []
+    name = question.removeprefix(prefix).removesuffix(suffix)
+    return [template.format(name) for template in MENU_QUESTION_TEMPLATES[1:]]
+
+
 def build_menu_entries(menu_df, aliases_df, source="kRpfYv.xlsx:Menu_Items"):
     """
     Create one entry per active menu item, with customer phrases
@@ -136,7 +159,7 @@ def build_menu_entries(menu_df, aliases_df, source="kRpfYv.xlsx:Menu_Items"):
         entries.append(make_entry(
             f"menu:{item.Menu_ID}",
             "menu_item",
-            f"What is {item.Item_Name}?",
+            MENU_QUESTION_TEMPLATES[0].format(item.Item_Name),
             f"{item.Item_Name} ({item.Category}): {item.Description}. "
             f"Price {item.Base_Price_PKR} {item.Currency}, served {item.Service_Window}. "
             f"Allergen information is not verified.",
