@@ -189,3 +189,40 @@ def sync_table(conn, sheet_name, df, key_columns):
         *(len(changes[kind]) for kind in ("new", "changed", "unchanged", "removed")),
     )
     return changes
+
+
+# ==========================================
+# 5. LOAD ALL TABLES
+# ==========================================
+
+def load_all_tables(conn, menu_excel, inventory_excel, overrides):
+    """
+    Load every sheet in TABLES into its own table.
+
+    overrides maps a sheet name to an already validated and cleaned
+    DataFrame (such as Menu_Items and Recipes), which is loaded instead
+    of the raw sheet.
+
+    Use an autocommit connection, so each table commits on its own.
+
+    A sheet that fails (missing sheet, empty or duplicate keys, database
+    error) is rolled back and keeps its previous data; the other sheets
+    still load. Returns (results, failures): failures maps each failed
+    sheet name to its error message.
+    """
+
+    workbooks = {"menu": menu_excel, "inventory": inventory_excel}
+    results = {}
+    failures = {}
+
+    for sheet_name, (workbook, key_columns) in TABLES.items():
+        try:
+            df = overrides.get(sheet_name)
+            if df is None:
+                df = pd.read_excel(workbooks[workbook], sheet_name=sheet_name)
+            results[sheet_name] = sync_table(conn, sheet_name, df, key_columns)
+        except Exception as error:
+            failures[sheet_name] = f"{type(error).__name__}: {error}"
+            logger.error("Table %s not loaded; it keeps its previous data. %s", sheet_name.lower(), failures[sheet_name])
+
+    return results, failures

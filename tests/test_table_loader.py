@@ -100,6 +100,40 @@ def test_sync_refuses_empty_sheet_and_duplicate_keys(conn):
         sync_table(conn, "Test_Sheet", pd.DataFrame({"ID": ["A", "A"]}), ["ID"])
 
 
+def test_failing_sheet_is_skipped_and_other_sheets_still_load(conn, monkeypatch):
+
+    import loading.table_loader as table_loader
+
+    monkeypatch.setattr(table_loader, "TABLES", {
+        "Test_Sheet": ("menu", ["ID"]),
+        "Test_Broken": ("menu", ["ID"]),
+        "Test_Missing": ("menu", ["ID"]),
+    })
+    conn.execute('DROP TABLE IF EXISTS "test_broken"')
+
+    # Load good data first, so the broken sheet's old data can be checked
+    table_loader.load_all_tables(conn, None, None, overrides={
+        "Test_Sheet": pd.DataFrame({"ID": ["A"], "Price": [100]}),
+        "Test_Broken": pd.DataFrame({"ID": ["X"], "Price": [1]}),
+        "Test_Missing": pd.DataFrame({"ID": ["M"], "Price": [1]}),
+    })
+
+    # Test_Broken now has duplicate keys; Test_Missing is not in the workbook at all
+    results, failures = table_loader.load_all_tables(conn, {"broken": "workbook"}, None, overrides={
+        "Test_Sheet": pd.DataFrame({"ID": ["A"], "Price": [150]}),
+        "Test_Broken": pd.DataFrame({"ID": ["X", "X"], "Price": [2, 3]}),
+    })
+
+    assert set(failures) == {"Test_Broken", "Test_Missing"}
+    assert results["Test_Sheet"]["changed"] == {"A"}
+    assert rows(conn) == {"A": 150}
+    # The failed sheet was rolled back and keeps its previous data
+    assert dict(conn.execute('SELECT row_key, price FROM "test_broken"').fetchall()) == {"X": 1}
+
+    conn.execute('DROP TABLE IF EXISTS "test_broken"')
+    conn.execute('DROP TABLE IF EXISTS "test_missing"')
+
+
 def test_prepare_rows_names_duplicate_keys():
 
     with pytest.raises(ValueError, match="Duplicate Deal_ID values: DEAL001"):
