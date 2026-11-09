@@ -318,12 +318,58 @@ def prefer_opening_hours(question, matches, min_score=MIN_SCORE):
     return next((m for m in matches if m[0] == wanted_id and m[4] >= min_score), best)
 
 
-def answer_question(conn, question, embed, branch_id=None):
+# ------------------------------------------
+# Cache confidence
+# ------------------------------------------
+# A cached answer is replayed for every repeat of the question until it
+# expires, so caching needs more confidence than answering once.
+#
+# Meaning matches: all-MiniLM-L6-v2 scores on the branch and menu entries
+# (measured 2026-11-09) put clear questions at 0.60-0.93 ("PECHS timings" 0.62,
+# "Where is the Gulshan branch?" 0.62, "Biryani price" 0.71), while answerable
+# but weak ones sit at 0.45-0.57 ("Gulshan address" 0.54, "when are you open"
+# 0.56). The runner-up score shows ambiguity: "when are you open" scores
+# PECHS hours 0.564 and Gulshan hours 0.519 (gap 0.045), a guess between
+# branches; clear questions lead by 0.06 or more.
+CACHE_MIN_SCORE = 0.60
+CACHE_MIN_MARGIN = 0.05
+
+# Keyword matches: ts_rank depends on word counts and weights, not meaning, so it
+# is not compared with these thresholds. A keyword answer is cached only when it
+# is the only entry matched and its customer phrases hold every searched word.
+
+
+def answer_is_cacheable(conn, question, matches, chosen, method):
+    """
+    Whether the answer chosen from matches is confident enough to cache.
+    Only approved entries qualify: a pending or unavailable answer is
+    searched again on every ask, however high it scores.
+    """
+
+    if chosen[3] != "approved":
+        return False
+
+    if method == "meaning":
+        runner_up = max((m[4] for m in matches if m[0] != chosen[0]), default=0.0)
+        # An intent swap picks a lower-scored entry, so its gap is negative and it is not cached
+        return chosen[4] >= CACHE_MIN_SCORE and chosen[4] - runner_up >= CACHE_MIN_MARGIN
+
+    if method == "keyword" and len(matches) == 1:
+        rows = conn.execute("SELECT keywords FROM knowledge_entries WHERE entry_id = %s", [chosen[0]]).fetchall()
+        phrases = set(re.findall(r"\w+", rows[0][0].lower())) if rows else set()
+        return set(keyword_words(question)) <= phrases
+
+    return False
+
+
+def retrieve_answer(conn, question, embed, branch_id=None):
     """
     Answer a customer question from the knowledge base.
 
-    Returns (answer, entry_id, method): method is "meaning", "keyword"
-    or "none". Unconfirmed answers carry a note saying so.
+    Returns (answer, entry_id, method, cacheable): method is "meaning",
+    "keyword" or "none"; cacheable says the answer is confident enough to
+    reuse for the same question (see Cache confidence). Unconfirmed answers
+    carry a note saying so.
     """
 
     matches = search_knowledge(conn, question, embed, limit=OPEN_STATUS_CANDIDATES, branch_id=branch_id)
@@ -333,9 +379,18 @@ def answer_question(conn, question, embed, branch_id=None):
     else:
         matches = keyword_search(conn, question, limit=OPEN_STATUS_CANDIDATES, branch_id=branch_id)
         if not matches:
-            return NOT_FOUND_ANSWER, None, "none"
+            return NOT_FOUND_ANSWER, None, "none", False
         chosen = prefer_opening_hours(question, matches, min_score=0)
         method = "keyword"
 
     entry_id, _, answer, status, _ = chosen
-    return answer + STATUS_NOTES.get(status, ""), entry_id, method
+    cacheable = answer_is_cacheable(conn, question, matches, chosen, method)
+    return answer + STATUS_NOTES.get(status, ""), entry_id, method, cacheable
+
+
+def answer_question(conn, question, embed, branch_id=None):
+    """
+    Answer a customer question: (answer, entry_id, method) from retrieve_answer.
+    """
+
+    return retrieve_answer(conn, question, embed, branch_id=branch_id)[:3]

@@ -13,6 +13,7 @@ from knowledge.knowledge_store import (
     MIN_SCORE,
     answer_question,
     document_text,
+    retrieve_answer,
     refresh_knowledge,
     search_knowledge,
 )
@@ -238,3 +239,32 @@ def test_pechs_hours_questions_still_answered_by_meaning(fallback_entries, quest
     _, entry_id, method = answer_question(FallbackConn(rows, entries, reverse=True), question, embed)
 
     assert (entry_id, method) == ("branch:UTG-KHI-001:hours", "meaning")
+
+
+# ==========================================
+# 7. CACHE CONFIDENCE WITH THE REAL MODEL
+# ==========================================
+
+@pytest.mark.parametrize("question, expected, cacheable", [
+    # Clear questions: score >= 0.60 and well ahead of the runner-up
+    ("When is the Gulshan-e-Iqbal branch open?", "branch:UTG-KHI-002:hours", True),
+    ("PECHS timings", "branch:UTG-KHI-001:hours", True),
+    ("Where is the Gulshan branch?", "branch:UTG-KHI-002:location", True),
+    ("What is the price of Chicken Biryani?", "menu:MENU001", True),
+    # Answered, but not confident enough to replay from the cache
+    ("Gulshan address", "branch:UTG-KHI-002:location", False),          # 0.54 < 0.60
+    ("when are you open", "branch:UTG-KHI-001:hours", False),           # PECHS 0.564 vs Gulshan 0.519
+    ("Can I go to PECHS now?", "branch:UTG-KHI-001:hours", False),      # intent swap over a higher location score
+    ("chikkan biryani milega?", "menu:MENU001", False),                 # meaning 0.48
+    # Keyword fallback: one entry matched, but "milega" is not one of its phrases
+    ("chikkan milega?", "menu:MENU001", False),
+    # Keyword fallback: both Gulshan entries match, intent picks one
+    ("Can I come to Gulshan tonight?", "branch:UTG-KHI-002:hours", False),
+])
+def test_cacheable_only_for_confident_answers(fallback_entries, question, expected, cacheable):
+
+    rows, entries, embed = fallback_entries
+
+    _, entry_id, _, is_cacheable = retrieve_answer(FallbackConn(rows, entries, reverse=False), question, embed)
+
+    assert (entry_id, is_cacheable) == (expected, cacheable), question

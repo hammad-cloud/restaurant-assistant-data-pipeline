@@ -20,12 +20,14 @@ from knowledge.knowledge_builder import make_entry
 # Import the knowledge store functions
 from knowledge.knowledge_store import (
     MIN_SCORE,
+    NOT_FOUND_ANSWER,
     answer_question,
     create_knowledge_table,
     keyword_search,
     prefer_opening_hours,
     refresh_embeddings,
     refresh_knowledge,
+    retrieve_answer,
     search_knowledge,
 )
 
@@ -407,3 +409,102 @@ def test_keyword_fallback_branch_intent_in_database(conn):
         ("chikkan biryani milega?", "menu:MENU001"),
     ]:
         assert answer_question(conn, question, no_embed)[1:] == (expected, "keyword"), question
+
+
+# ==========================================
+# CACHE CONFIDENCE POLICY (no database)
+# ==========================================
+
+class ScoredConn:
+    """
+    Meaning search gets entries scored exactly as given (query embedding [1, 0]);
+    keyword search gets the given hits; keyword lookups get the given phrases.
+    """
+
+    def __init__(self, scores=(), keyword_hits=(), phrases=None, status="approved"):
+        self.rows = [(entry_id, "q", f"answer {entry_id}", status, [score, 0.0]) for entry_id, score in scores]
+        self.keyword_hits = list(keyword_hits)
+        self.phrases = phrases or {}
+
+    def execute(self, sql, params=None):
+        if sql.startswith("SELECT keywords"):
+            rows = [(self.phrases[params[0]],)] if params[0] in self.phrases else []
+        elif "to_tsquery" in sql:
+            rows = self.keyword_hits
+        else:
+            rows = self.rows
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
+def query_embed(texts):
+
+    return [[1.0, 0.0] for _ in texts]
+
+
+@pytest.mark.parametrize("scores, cacheable", [
+    ([("menu:MENU001", 0.80), ("menu:MENU002", 0.40)], True),     # confident and clear
+    ([("menu:MENU001", 0.61), ("menu:MENU002", 0.55)], True),     # just above both limits
+    ([("menu:MENU001", 0.55), ("menu:MENU002", 0.20)], False),    # answered (>= MIN_SCORE) but low confidence
+    ([("menu:MENU001", 0.70), ("menu:MENU002", 0.68)], False),    # ambiguous: two entries nearly tie
+    ([("menu:MENU001", 0.65)], True),                             # only one entry exists
+])
+def test_meaning_answer_cacheable_by_score_and_margin(scores, cacheable):
+
+    answer, entry_id, method, is_cacheable = retrieve_answer(ScoredConn(scores), "biryani", query_embed)
+
+    assert (entry_id, method, is_cacheable) == ("menu:MENU001", "meaning", cacheable)
+    assert answer == "answer menu:MENU001"  # the answer itself never changes
+
+
+def test_intent_swapped_meaning_answer_is_not_cached():
+
+    conn = ScoredConn([("branch:UTG-KHI-002:location", 0.75), ("branch:UTG-KHI-002:hours", 0.70)])
+
+    assert retrieve_answer(conn, "Is Gulshan open now?", query_embed)[1:] == ("branch:UTG-KHI-002:hours", "meaning", False)
+
+
+PANI = {"menu:MENU031": "mineral water pani ki bottle"}
+
+
+@pytest.mark.parametrize("question, hits, phrases, cacheable", [
+    # One entry, every searched word among its phrases: cached whatever its ts_rank
+    ("pani ki bottle", [keyword_hit("menu:MENU031")], PANI, True),
+    ("PANI bottle?", [keyword_hit("menu:MENU031")], PANI, True),
+    # One entry, but "thandi" matched nothing: a partial match
+    ("thandi pani", [keyword_hit("menu:MENU031")], PANI, False),
+    # Two entries matched: ambiguous even though intent picks one
+    ("Gulshan tonight", GULSHAN_TIE, {"branch:UTG-KHI-002:hours": "gulshan e iqbal tonight"}, False),
+])
+def test_keyword_answer_cacheable_only_when_unambiguous(question, hits, phrases, cacheable):
+
+    conn = ScoredConn(keyword_hits=hits, phrases=phrases)
+
+    assert retrieve_answer(conn, question, query_embed)[2:] == ("keyword", cacheable)
+
+
+def test_keyword_cacheability_ignores_rank_scale():
+
+    tiny_rank = [("menu:MENU031", "q", "a", "approved", 0.0001)]
+
+    assert retrieve_answer(ScoredConn(keyword_hits=tiny_rank, phrases=PANI), "pani", query_embed)[3] is True
+
+
+@pytest.mark.parametrize("status, cacheable", [("approved", True), ("pending", False), ("unavailable", False)])
+def test_high_confidence_meaning_answer_cacheable_only_when_approved(status, cacheable):
+
+    conn = ScoredConn([("menu:MENU001", 0.90), ("menu:MENU002", 0.20)], status=status)
+
+    assert retrieve_answer(conn, "biryani", query_embed)[1:] == ("menu:MENU001", "meaning", cacheable)
+
+
+@pytest.mark.parametrize("status, cacheable", [("approved", True), ("pending", False), ("unavailable", False)])
+def test_unambiguous_keyword_answer_cacheable_only_when_approved(status, cacheable):
+
+    hit = [("menu:MENU031", "q", "a", status, 0.06)]
+
+    assert retrieve_answer(ScoredConn(keyword_hits=hit, phrases=PANI), "pani ki bottle", query_embed)[2:] == ("keyword", cacheable)
+
+
+def test_not_found_is_never_cacheable():
+
+    assert retrieve_answer(ScoredConn(), "do you sell cars", query_embed) == (NOT_FOUND_ANSWER, None, "none", False)
