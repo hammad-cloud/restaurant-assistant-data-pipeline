@@ -5,6 +5,9 @@
 # Import logging to record knowledge refresh results
 import logging
 
+# Import re to split questions into search words
+import re
+
 # Import NumPy for similarity search over stored embeddings
 import numpy as np
 
@@ -198,3 +201,54 @@ def search_knowledge(conn, query, embed, limit=5, branch_id=None):
     scores = np.array([row[4] for row in rows]) @ np.array(embed([query])[0])
     best = np.argsort(-scores)[:limit]
     return [(*rows[i][:4], float(scores[i])) for i in best]
+
+
+# ==========================================
+# 5. QUICK ANSWERS
+# ==========================================
+
+# Cosine similarity a meaning match needs before it is trusted as the answer
+MIN_SCORE = 0.45
+
+
+# Words that ask whether a branch is open, not where it is ("visit" and "go" alone are not enough)
+OPEN_STATUS_WORDS = {
+    "now", "tonight", "open", "opening", "operating",
+    "close", "closed", "closing", "hours", "timing", "timings",
+}
+
+# Words that ask about branch seating; the location entry holds the table and seat counts
+SEATING_WORDS = {"seat", "seats", "seating", "capacity"}
+
+# How many matches are checked for the same branch's other entry
+OPEN_STATUS_CANDIDATES = 3
+
+
+def prefer_opening_hours(question, matches, min_score=MIN_SCORE):
+    """
+    Pick the best match, given matches best first.
+
+    The embedding model reads "Can I visit Gulshan now?" as a location
+    question, and keyword search ranks a branch's location and hours entries
+    equally because both hold the branch name. So when the best match is a
+    branch entry, the question's intent picks between that branch's two
+    entries: opening-status words choose hours, seating words choose location.
+    The other entry is used only if it is among the matches and scores at
+    least min_score (pass 0 for keyword ranks).
+    """
+
+    best = matches[0]
+    branch, _, kind = best[0].rpartition(":")
+    if not branch.startswith("branch:") or kind not in ("hours", "location"):
+        return best
+
+    words = set(re.findall(r"\w+", question.lower()))
+    if OPEN_STATUS_WORDS & words:
+        wanted = "hours"
+    elif SEATING_WORDS & words:
+        wanted = "location"
+    else:
+        return best
+
+    wanted_id = f"{branch}:{wanted}"
+    return next((m for m in matches if m[0] == wanted_id and m[4] >= min_score), best)

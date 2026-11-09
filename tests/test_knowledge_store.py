@@ -16,7 +16,9 @@ from knowledge.knowledge_builder import make_entry
 
 # Import the knowledge store functions
 from knowledge.knowledge_store import (
+    MIN_SCORE,
     create_knowledge_table,
+    prefer_opening_hours,
     refresh_embeddings,
     refresh_knowledge,
     search_knowledge,
@@ -208,3 +210,57 @@ def test_search_returns_closest_entry_first(conn):
     # Branch filter keeps that branch plus entries for all branches
     ids = {row[0] for row in search_knowledge(conn, "open", fake_embed, branch_id="UTG-KHI-001")}
     assert "branch:UTG-KHI-002:hours" not in ids
+
+
+# ==========================================
+# OPENING-STATUS INTENT (no database)
+# ==========================================
+
+def match(entry_id, score):
+
+    return (entry_id, "question", "answer", "approved", score)
+
+
+# Ranked as the real model ranked "Can I visit Gulshan-e-Iqbal now?"
+GULSHAN_LOCATION_FIRST = [
+    match("branch:UTG-KHI-002:location", 0.670),
+    match("branch:UTG-KHI-002:hours", 0.607),
+    match("branch:UTG-KHI-001:location", 0.410),
+]
+
+
+@pytest.mark.parametrize("question", [
+    "Can I visit Gulshan-e-Iqbal now?",
+    "Is it open now?",
+    "Can I go there now?",
+    "Are you open tonight?",
+    "Is the branch operating today?",
+    "Gulshan opening hours",
+])
+def test_opening_status_question_prefers_same_branch_hours(question):
+
+    assert prefer_opening_hours(question, GULSHAN_LOCATION_FIRST)[0] == "branch:UTG-KHI-002:hours"
+
+
+@pytest.mark.parametrize("question", [
+    "Can I visit Gulshan?",          # "visit" alone is not an opening-status question
+    "How do I go to Gulshan?",
+    "Where is Gulshan?",
+    "What is the Gulshan address?",
+    "How many seats does Gulshan have?",
+])
+def test_location_question_keeps_best_match(question):
+
+    assert prefer_opening_hours(question, GULSHAN_LOCATION_FIRST)[0] == "branch:UTG-KHI-002:location"
+
+
+def test_hours_entry_must_be_trusted_and_for_the_same_branch():
+
+    weak_hours = [match("branch:UTG-KHI-002:location", 0.60), match("branch:UTG-KHI-002:hours", MIN_SCORE - 0.01)]
+    other_branch = [match("branch:UTG-KHI-002:location", 0.60), match("branch:UTG-KHI-001:hours", 0.59)]
+    not_location = [match("menu:MENU001", 0.70), match("branch:UTG-KHI-002:hours", 0.65)]
+
+    assert prefer_opening_hours("open now?", weak_hours)[0] == "branch:UTG-KHI-002:location"
+    assert prefer_opening_hours("open now?", other_branch)[0] == "branch:UTG-KHI-002:location"
+    # Only a location answer is ever swapped
+    assert prefer_opening_hours("biryani now?", not_location)[0] == "menu:MENU001"
