@@ -2,6 +2,8 @@
 # 1. IMPORTS
 # ==========================================
 
+from types import SimpleNamespace
+
 import pytest
 
 from knowledge.knowledge_store import (
@@ -103,6 +105,112 @@ def test_empty_question_is_refused():
 
 
 # ==========================================
+# 2b. MENU QUESTION VARIATIONS (fake connection, no database)
+# ==========================================
+
+BIRYANI_ANSWER = "Chicken Biryani (Pakistani). Price 420 PKR."
+
+
+class FakeConn:
+    """Serves knowledge_entries rows to warm() and records every SQL statement."""
+
+    def __init__(self, frequent=()):
+        self.sql = []
+        self.frequent = [(q,) for q in frequent]
+        self.rows = [
+            ("menu:MENU001", "menu_item", "What is Chicken Biryani?", BIRYANI_ANSWER, None, "approved"),
+            ("branch:UTG-KHI-002:hours", "opening_hours",
+             "What are the opening hours of the Gulshan-e-Iqbal branch?",
+             "The Gulshan-e-Iqbal branch is open 24/7.", "UTG-KHI-002", "approved"),
+            ("menu:MENU002", "menu_item", "What is Mutton Karahi?", "Mutton Karahi. Price 900 PKR.", None, "pending"),
+        ]
+
+    def execute(self, sql, params=None):
+        self.sql.append(sql)
+        if "FROM knowledge_entries" in sql:
+            # Mirrors the status filter warm() puts in its SQL
+            assert "WHERE status = 'approved'" in sql
+            rows = [r[:5] for r in self.rows if r[5] == "approved"]
+        else:
+            rows = self.frequent if "FROM question_log" in sql else []
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
+def warmed(answer_fn, frequent=()):
+
+    conn = FakeConn(frequent)
+    quick = QuickAnswers(conn, lambda texts: [[0.0]] * len(texts), answer_fn=answer_fn)
+    quick.warm()
+    return quick, conn
+
+
+@pytest.mark.parametrize("question", [
+    "What is Chicken Biryani?",
+    "What is the price of Chicken Biryani?",
+    "How much does Chicken Biryani cost?",
+    "tell me about chicken biryani",
+])
+def test_menu_variations_are_cache_hits_for_the_canonical_entry(question):
+
+    def fail(*args, **kwargs):
+        raise AssertionError("knowledge base searched for a known menu variation")
+
+    quick, _ = warmed(fail)
+
+    for _ in range(2):  # first ask and repeat are both served from cache
+        assert quick.ask(question) == (BIRYANI_ANSWER, "menu:MENU001", "exact", True)
+
+
+def test_variations_add_cache_keys_but_no_knowledge_entries():
+
+    answer_fn, _ = counting_answer_fn()
+    quick, conn = warmed(answer_fn)
+
+    menu_keys = [key for key, hit in quick.cache.items() if hit[1] == "menu:MENU001"]
+    assert len(menu_keys) == 4
+    assert not any("INSERT" in sql or "UPDATE" in sql for sql in conn.sql)
+
+
+@pytest.mark.parametrize("question", ["What is Mutton Karahi?", "How much does Mutton Karahi cost?"])
+def test_pending_canonical_entries_and_variations_are_not_preloaded(question):
+
+    answer_fn, calls = counting_answer_fn()
+    quick, _ = warmed(answer_fn)
+
+    assert all(hit[1] != "menu:MENU002" for hit in quick.cache.values())
+    assert quick.ask(question)[3] is False  # searched, not served from the warm cache
+    assert calls == [question]
+
+
+def test_unknown_questions_still_use_semantic_retrieval():
+
+    answer_fn, calls = counting_answer_fn()
+    quick, _ = warmed(answer_fn)
+
+    # Variation templates are applied to menu entries only
+    assert quick.ask("Tell me about the Gulshan-e-Iqbal branch")[2:] == ("meaning", False)
+    assert quick.ask("Is chicken biryani spicy?")[2:] == ("meaning", False)
+    assert len(calls) == 2
+
+
+def test_variation_cache_stays_isolated_per_branch():
+
+    answer_fn, calls = counting_answer_fn()
+    quick, _ = warmed(answer_fn)
+
+    # A branch-specific ask is searched for that branch, then cached for it only
+    assert quick.ask("How much does Chicken Biryani cost?", branch_id="UTG-KHI-001")[3] is False
+    assert quick.ask("How much does Chicken Biryani cost?", branch_id="UTG-KHI-001")[3] is True
+    assert quick.ask("How much does Chicken Biryani cost?", branch_id="UTG-KHI-002")[3] is False
+    assert calls == ["How much does Chicken Biryani cost?"] * 2
+
+    # A branch entry is warmed for its own branch, never another one
+    hours = "What are the opening hours of the Gulshan-e-Iqbal branch?"
+    assert quick.ask(hours, branch_id="UTG-KHI-002")[3] is True
+    assert quick.ask(hours, branch_id="UTG-KHI-001")[3] is False
+
+
+# ==========================================
 # 2c. CONFIDENCE-AWARE CACHING (no database)
 # ==========================================
 
@@ -129,3 +237,16 @@ def test_uncertain_answer_does_not_evict_confident_ones():
     quick.ask("a")
     quick.ask("unsure b")  # not stored, so "a" keeps the only slot
     assert quick.ask("a")[3] is True
+
+
+def test_warm_preloads_only_confident_frequent_questions():
+
+    answer_fn, calls = counting_answer_fn()
+    quick, _ = warmed(answer_fn, frequent=["Biryani price?", "unsure thing", "unknown thing"])
+
+    assert calls == ["Biryani price?", "unsure thing", "unknown thing"]
+    assert quick.ask("biryani price")[3] is True
+    assert quick.ask("unsure thing")[3] is False
+    assert quick.ask("unknown thing")[3] is False
+    # Canonical questions are still warmed without a search
+    assert quick.ask("What is Chicken Biryani?")[3] is True

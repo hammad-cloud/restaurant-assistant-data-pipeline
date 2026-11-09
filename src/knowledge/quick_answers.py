@@ -17,6 +17,9 @@ from collections import OrderedDict
 # Import the knowledge base answer function
 from knowledge.knowledge_store import retrieve_answer
 
+# Import the other phrasings customers use for a menu question
+from knowledge.knowledge_builder import menu_question_variations
+
 
 logger = logging.getLogger("restaurant_pipeline")
 
@@ -131,6 +134,47 @@ class QuickAnswers:
         else:
             logger.debug("Not cached (uncertain %s answer): %r", method, question)
         return answer, entry_id, method, False
+
+    def warm(self, top_n=50):
+        """
+        Preload the cache before the first customer asks:
+        every approved knowledge base question with its own answer (one quick query),
+        then the top_n most frequently asked questions from question_log
+        whose answers are confident enough to cache.
+
+        Returns the number of cached questions.
+        """
+
+        self.conn.execute(CREATE_QUESTION_LOG_SQL)
+
+        # Load the embedding model now, so the first uncached question is not slow
+        self.embed(["warm up"])
+
+        rows = self.conn.execute(
+            "SELECT entry_id, topic, question, answer, branch_id FROM knowledge_entries "
+            "WHERE status = 'approved'"
+        ).fetchall()
+        for entry_id, topic, question, answer, branch_id in rows:
+            # Menu phrasings ("How much does X cost?") are extra cache keys for the same entry, not extra entries
+            questions = [question] + (menu_question_variations(question) if topic == "menu_item" else [])
+            # A branch question is cached for that branch and for "any branch"
+            for text in questions:
+                for key_branch in {None, branch_id}:
+                    self._store((normalize_question(text), key_branch), answer, entry_id, "exact")
+
+        frequent = self.conn.execute(
+            "SELECT question FROM question_log ORDER BY times_asked DESC, last_asked_at DESC LIMIT %s",
+            [top_n],
+        ).fetchall()
+        for (question,) in frequent:
+            key = (normalize_question(question), None)
+            if self._cached(key) is None:
+                answer, entry_id, method, cacheable = self.answer_fn(self.conn, question, self.embed)
+                if cacheable:
+                    self._store(key, answer, entry_id, method)
+
+        logger.info("Quick answer cache warmed: %s questions.", len(self.cache))
+        return len(self.cache)
 
     def save_counts(self):
         """
