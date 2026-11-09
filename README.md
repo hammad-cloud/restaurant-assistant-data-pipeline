@@ -125,6 +125,121 @@ pgvector is not installed on this PostgreSQL, so similarity is computed with Num
 That is fast for a few thousand documents. For much larger data, install pgvector and switch the
 column to `vector(384)` with an HNSW index.
 
+## Project Folder Structure
+
+```text
+restaurant-assistant/
+├── .gitignore
+├── .env.example
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── scripts/
+│   ├── price_change_demo.ps1
+│   └── setup_database.sql
+├── src/
+│   ├── ask.py
+│   ├── inspect_workbooks.py
+│   ├── logging_config.py
+│   ├── database/
+│   │   └── connection.py
+│   ├── ingestion/
+│   │   └── source_backup.py
+│   ├── knowledge/
+│   │   ├── embedder.py
+│   │   ├── knowledge_builder.py
+│   │   ├── knowledge_store.py
+│   │   └── quick_answers.py
+│   ├── loading/
+│   │   └── table_loader.py
+│   ├── tracking/
+│   │   ├── change_detector.py
+│   │   ├── record_hasher.py
+│   │   └── snapshot_manager.py
+│   ├── transformation/
+│   │   ├── menu_transformer.py
+│   │   └── recipe_transformer.py
+│   └── validation/
+│       ├── data_validator.py
+│       ├── menu_schema.py
+│       ├── quarantine.py
+│       └── schema_validator.py
+└── tests/
+    ├── test_branch_hours_retrieval.py
+    ├── test_change_detector.py
+    ├── test_database_connection.py
+    ├── test_data_validator.py
+    ├── test_knowledge_builder.py
+    ├── test_knowledge_store.py
+    ├── test_logging_config.py
+    ├── test_menu_transformer.py
+    ├── test_quarantine.py
+    ├── test_quick_answers.py
+    ├── test_recipe_transformer.py
+    ├── test_record_hasher.py
+    ├── test_schema_validator.py
+    ├── test_snapshot_manager.py
+    ├── test_source_backup.py
+    └── test_table_loader.py
+```
+
+The `data/` folder (raw workbooks, backups, processed files, rejected rows and logs) is not shown
+because it is kept out of Git; the pipeline reads from and writes to it at run time.
+
+### Root files
+
+| File | Purpose |
+|---|---|
+| `.env.example` | Lists the PostgreSQL environment variables (`PGHOST`, `PGDATABASE`, ...). Reference only; nothing loads a `.env` file. |
+| `.gitignore` | Keeps data files, virtual environments and secrets out of Git. |
+| `pyproject.toml` | pytest configuration: adds `src/` to the import path and points pytest at `tests/`. |
+| `requirements.txt` | Python dependencies installed with `pip install -r requirements.txt`. |
+
+### Folders
+
+| Folder | Responsibility |
+|---|---|
+| `scripts/` | Helper scripts run outside the Python pipeline. `setup_database.sql` is the one-time PostgreSQL setup (app user and databases). `price_change_demo.ps1` is the price-change demo, which writes to the **production** database (see the warning above). |
+| `src/` | All pipeline source code. Each subfolder groups the code for one part of the pipeline. |
+| `src/ingestion/` | **Extract / ingest:** safely backs up the source Excel workbooks before any processing. |
+| `src/validation/` | **Data quality:** checks columns and values, and moves bad rows to quarantine. |
+| `src/transformation/` | **Transform:** standardises text and IDs so records match across sheets. |
+| `src/tracking/` | **Change data capture:** fingerprints rows and compares each run with the previous one. |
+| `src/database/` | **Connectivity:** opens PostgreSQL connections from environment variables. |
+| `src/loading/` | **Load:** writes the validated sheets into PostgreSQL tables. |
+| `src/knowledge/` | **Knowledge base and retrieval:** builds question/answer entries, embeds them and finds the best stored answer for a question. |
+| `tests/` | Automated pytest tests (see below). |
+
+### Important files
+
+| File | Role |
+|---|---|
+| `src/inspect_workbooks.py` | The pipeline entry point (orchestrator). Runs every stage in order (ingest, validate, transform, track, load, build knowledge, embed), runs each step on its own so one failure does not stop the others, and reports what failed at the end. |
+| `src/ask.py` | Command-line tool for asking customer questions. It returns stored answers from the knowledge base; it does not generate text. Writes question counts to the **production** database (see the warning under Quick Answers). |
+| `src/logging_config.py` | Central logging setup: terminal output plus a rotating log file in `data/logs/`, and logging of unexpected crashes as `CRITICAL`. |
+| `src/database/connection.py` | Builds PostgreSQL connections for the production (`PGDATABASE`) and test (`PGDATABASE_TEST`) databases, with clear errors when settings are missing or the server cannot be reached. Passwords are never logged. |
+| `src/ingestion/source_backup.py` | Copies each source workbook to a backup folder, records its SHA-256 checksum in a manifest, verifies the copy, and gives the pipeline a working copy so the original file is never modified. |
+| `src/loading/table_loader.py` | Lists the sheets to load (`TABLES`) and syncs each one into its own PostgreSQL table: inserts new rows, updates changed rows, deletes removed rows, and rolls back a table if its load fails. |
+| `src/knowledge/knowledge_builder.py` | Turns menu items, aliases, branches and service rules into question/answer knowledge entries, each with a status (for example approved or pending). |
+| `src/knowledge/knowledge_store.py` | Stores knowledge entries and their embeddings in the `knowledge_entries` table, and searches them by meaning (cosine similarity with NumPy) or by keywords. |
+| `src/knowledge/embedder.py` | Converts text into 384-number vectors with the local `all-MiniLM-L6-v2` sentence-transformers model (CPU, no API key). |
+| `src/knowledge/quick_answers.py` | The retrieval engine behind `ask.py`: answer cache, meaning search, keyword search and the "no answer" reply, plus question counts in `question_log`. |
+
+The remaining modules support these stages: `record_hasher.py` (row fingerprints),
+`change_detector.py` (new / changed / unchanged / removed rows), `snapshot_manager.py` (saved
+baseline for comparison), `menu_transformer.py` and `recipe_transformer.py` (standardisation),
+`menu_schema.py` (required menu columns), `schema_validator.py` (required-column checks),
+`data_validator.py` (positive, unique, required and foreign-key value checks) and `quarantine.py`
+(splits off and saves rejected rows).
+
+### Tests
+
+The `tests/` directory contains pytest tests, mostly one file per module, named
+`test_<module>.py` (for example `test_table_loader.py` tests `src/loading/table_loader.py`).
+Most are unit tests that check one module on its own. `test_branch_hours_retrieval.py` checks
+that opening-hours questions retrieve the correct branch-hours answer. The PostgreSQL integration
+tests connect only to the test database; see **Run the tests** under Usage for what they change there.
+
 ## Setup
 
 1. Create and activate a virtual environment (Windows):
