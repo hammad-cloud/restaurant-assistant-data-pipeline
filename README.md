@@ -1,4 +1,4 @@
-# Restaurant Assistant Data Pipeline
+# Restaurant Assistant BOT (Data Engineering Pipeline) - PHASE 01
 
 An end-to-end data engineering pipeline for restaurant data.
 
@@ -16,9 +16,114 @@ An end-to-end data engineering pipeline for restaurant data.
 - Python
 - Pandas
 - PostgreSQL
-- SQLAlchemy
-- Pydantic
-- pgvector
+- psycopg 3
+- NumPy
+- sentence-transformers (`all-MiniLM-L6-v2`, runs locally on CPU)
+
+## Pipeline Stages
+
+```
+Excel workbooks (data/raw)
+   │  1. Ingest      back up each file (hash + manifest), work on a copy
+   ▼
+pandas DataFrames
+   │  2. Validate    required columns, empty/duplicate IDs, positive prices
+   │                 and quantities, recipe → menu foreign keys;
+   │                 bad rows go to data/rejected/ instead of stopping the run
+   │  3. Transform   standardise menu text and recipe IDs
+   │  4. Track       SHA-256 hash per row; compare with the last snapshot
+   ▼
+PostgreSQL
+   │  5. Load        one table per data sheet (19 tables), see below
+   │  6. Documents   question/answer knowledge entries → knowledge_entries
+   │  7. Embed       384-number sentence embedding per document
+   ▼
+Semantic search (search_knowledge)
+```
+
+### Structured tables
+
+Each data sheet listed in `src/loading/table_loader.py` (`TABLES`) is loaded into a table
+with the same name in lowercase (`menu_items`, `recipes`, `branch_stock`, ...).
+Every table has:
+
+- `row_key`: the primary key. Composite keys are joined with `|`, for example
+  `MENU001|ING002` in `recipes`.
+- `record_hash`: a fingerprint of the row, used to spot changes.
+- `loaded_at`: the time the row was last written.
+- one column per sheet column, lowercase. Number columns are `NUMERIC`, everything else is `TEXT`.
+
+`menu_items` and `recipes` are loaded from the validated data, so rejected rows never reach
+the database. The other sheets are loaded as they are, after their keys are checked.
+
+### Future data loads and updates
+
+Replace a workbook in `data/raw/` and run the pipeline again. Each run:
+
+- inserts new rows, rewrites only changed rows, and deletes rows removed from the sheet;
+- leaves unchanged rows (and their `loaded_at`) alone;
+- adds new sheet columns to the table automatically;
+- commits each table on its own, and rolls back that table if anything fails;
+- refuses to empty a table when a sheet comes back empty, and rejects empty or duplicate keys;
+- re-embeds only the documents whose text changed (or every document if the model changes).
+
+To load a new sheet, add one line to `TABLES` with its workbook and key columns.
+
+### When something fails
+
+One problem stops only the part it affects:
+
+| Problem | What happens |
+|---|---|
+| Bad row (negative price, missing ID, duplicate, orphan recipe) | Saved to `data/rejected/`; the good rows load |
+| Bad sheet (duplicate or empty keys, sheet missing, no rows) | That table is rolled back and keeps its previous data; the other tables still load |
+| Knowledge base step fails | Previous knowledge entries are kept; embeddings still run |
+| Embedding step fails | Tables and knowledge are saved; embeddings are retried on the next run |
+| Database unreachable, or Menu_Items / Recipes missing required columns | The run stops: later steps cannot work without them |
+
+A run with any failed step ends with a list of what failed and why, for example
+`table deals: ValueError: Duplicate Deal_ID values: DEAL001`, logs it as `ERROR`, and exits with
+status 1. Fix the sheet and run again; only the fixed part is loaded.
+
+### Price-change demo
+
+> **Warning:** this script runs the full pipeline twice against the **production** database
+> (`PGDATABASE`) and changes production data (tables, knowledge entries and embeddings).
+> Do not run it as part of a submission or review check.
+
+Shows that a new workbook only rewrites what changed. With the PG* variables set:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/price_change_demo.ps1
+```
+
+Step 1 loads `data/demo/kRpfYv_price_demo.xlsx`, a copy of the menu workbook with Chicken Biryani
+changed from 420 to 450 PKR. It is designed to show that only the changed menu row, its knowledge
+entry and that entry's embedding are rewritten. Step 2 loads the original workbook again and puts the price back. The original Excel file
+and its backups are not modified.
+
+To run the pipeline on any other menu workbook, set `RESTAURANT_MENU_FILE` to its path.
+
+### Document embeddings
+
+Each knowledge entry (question, answer and customer phrases) is embedded with
+`sentence-transformers/all-MiniLM-L6-v2`. The first run downloads the model (~90 MB) and caches it.
+Embeddings are stored in `knowledge_entries.embedding` (`REAL[]`), with the model name in
+`embedding_model`. Search them by meaning:
+
+```python
+from database.connection import connect_to_production_database
+from knowledge.embedder import embed_texts
+from knowledge.knowledge_store import search_knowledge
+
+with connect_to_production_database() as conn:
+    for entry_id, question, answer, status, score in search_knowledge(conn, "kya biryani milegi?", embed_texts):
+        print(round(score, 2), question)
+```
+
+pgvector is not installed on this PostgreSQL, so similarity is computed with NumPy.
+That is fast for a few thousand documents. For much larger data, install pgvector and switch the
+column to `vector(384)` with an HNSW index.
 
 ## Setup
 
@@ -63,9 +168,17 @@ $env:PGPASSWORD = [Net.NetworkCredential]::new("", (Read-Host "PostgreSQL passwo
 
 Run the pipeline:
 
+> **Warning:** this command executes the ingestion pipeline and writes to the PostgreSQL database
+> configured through `PGDATABASE`. Do not run it against production during submission review.
+> Use a controlled test environment for database testing.
+
 ```powershell
 python src/inspect_workbooks.py
 ```
+
+The run ends by syncing the knowledge base into the `knowledge_entries` table of the
+`PGDATABASE` database (created on first run), so the PostgreSQL variables above must be set.
+It stops with an error if they are missing or the database cannot be reached.
 
 Rejected records are saved as CSV files in `data/rejected/`, one file per check
 (for example `rejected_menu_prices.csv`). Each run replaces these files, and a file
@@ -85,6 +198,57 @@ Run the tests:
 python -m pytest -v
 ```
 
+The PostgreSQL integration tests (in `test_knowledge_store.py`, `test_quick_answers.py` and
+`test_table_loader.py`) connect only to the test database (`PGDATABASE_TEST`,
+`restaurant_assistant_test`) and are skipped when its settings are not set. Their fixtures
+**drop and recreate test tables** (`knowledge_entries`, `question_log`, `test_sheet`) and store
+**fake test embeddings** (3 numbers, model name `fake`), replacing any real embeddings in the test
+database. Refresh the test database embeddings after running them if you need real ones there.
+
+## Quick Answers
+
+Answers are **retrieved, not generated**: the system returns answer text stored in
+`knowledge_entries` (with a note when it is not confirmed). No LLM is used to generate responses.
+
+> **Warning:** `src/ask.py` connects to the **production** database (`PGDATABASE`) and writes to it:
+> it creates the `question_log` table if missing and saves question counts when the session ends.
+> It is not a safe test command.
+
+`src/ask.py` answers customer questions from the knowledge base:
+
+```powershell
+python src/ask.py                          # ask questions one after another
+python src/ask.py "where is gulshan branch"
+python src/ask.py --branch UTG-KHI-002     # answers for one branch
+python src/ask.py --top                    # most frequently asked questions
+```
+
+How an answer is found (`src/knowledge/quick_answers.py`):
+
+1. **Cache.** Questions are matched ignoring case, spaces and punctuation. A cached question is
+   answered from memory in under 1 ms, with no database lookup and no embedding model.
+2. **Meaning.** Otherwise the question is embedded and compared with every stored document.
+   A match scoring at least 0.45 is used.
+3. **Keywords.** Otherwise the customer phrases (Roman Urdu aliases such as "chikkan biryani")
+   are searched.
+4. **No match.** The bot says it has no answer and that staff can help. This is not cached.
+
+Answers that are not confirmed yet carry a note saying so.
+
+At startup the cache is filled with the questions of **approved** knowledge entries only (plus the
+other phrasings of each approved menu question), and with those of the 50 most frequently asked
+questions whose answers are eligible for caching: approved, and a confident, unambiguous match.
+Pending and unavailable answers are never cached; they are searched again on every ask.
+
+Each question asked is counted in the `question_log` table when the session ends, so frequent questions are ready instantly next time. Cached answers expire after 5 minutes,
+so a pipeline update shows up without a restart.
+
 ## Project Status
 
-Under development.
+The seven stages above are implemented and called in order from `python src/inspect_workbooks.py`.
+
+Not included in Phase 01:
+
+- LLM-generated responses (answers are retrieved stored text).
+- Best-selling items: no sales data exists, so the bot says this is unavailable.
+- Clarifying questions: a question that could match either branch is answered with the best match.
