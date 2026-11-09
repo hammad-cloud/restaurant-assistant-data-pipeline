@@ -19,6 +19,7 @@ from knowledge.knowledge_store import (
     create_knowledge_table,
     refresh_embeddings,
     refresh_knowledge,
+    search_knowledge,
 )
 
 
@@ -193,3 +194,17 @@ def test_embeddings_created_once_and_redone_only_for_changed_entries(conn):
 
     # A different model re-embeds everything
     assert refresh_embeddings(conn, fake_embed, "fake-v2") == 3
+
+
+def test_search_returns_closest_entry_first(conn):
+
+    refresh_knowledge(conn, sample_entries())
+    refresh_embeddings(conn, fake_embed, "fake")
+
+    results = search_knowledge(conn, "biryani price", fake_embed, limit=2)
+    assert results[0][0] == "menu:MENU001"
+    assert len(results) == 2
+
+    # Branch filter keeps that branch plus entries for all branches
+    ids = {row[0] for row in search_knowledge(conn, "open", fake_embed, branch_id="UTG-KHI-001")}
+    assert "branch:UTG-KHI-002:hours" not in ids

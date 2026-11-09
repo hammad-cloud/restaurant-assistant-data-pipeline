@@ -5,6 +5,9 @@
 # Import logging to record knowledge refresh results
 import logging
 
+# Import NumPy for similarity search over stored embeddings
+import numpy as np
+
 # Import Pandas to reuse the existing change detector
 import pandas as pd
 
@@ -171,3 +174,27 @@ def refresh_embeddings(conn, embed, model_name):
 
     logger.info("Embeddings refreshed: %s entries embedded with %s.", len(rows), model_name)
     return len(rows)
+
+
+def search_knowledge(conn, query, embed, limit=5, branch_id=None):
+    """
+    Return the entries most similar in meaning to query, best first,
+    as (entry_id, question, answer, status, score) tuples.
+
+    Embeddings are normalized, so the dot product is the cosine similarity.
+    branch_id keeps entries for that branch plus entries for all branches.
+    """
+
+    sql = "SELECT entry_id, question, answer, status, embedding FROM knowledge_entries WHERE embedding IS NOT NULL"
+    params = []
+    if branch_id is not None:
+        sql += " AND (branch_id = %s OR branch_id IS NULL)"
+        params.append(branch_id)
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return []
+
+    scores = np.array([row[4] for row in rows]) @ np.array(embed([query])[0])
+    best = np.argsort(-scores)[:limit]
+    return [(*rows[i][:4], float(scores[i])) for i in best]
