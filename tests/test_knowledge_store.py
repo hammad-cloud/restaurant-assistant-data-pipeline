@@ -20,6 +20,7 @@ from knowledge.knowledge_builder import make_entry
 # Import the knowledge store functions
 from knowledge.knowledge_store import (
     MIN_SCORE,
+    answer_question,
     create_knowledge_table,
     keyword_search,
     prefer_opening_hours,
@@ -324,3 +325,85 @@ def test_keyword_search_common_words_do_not_match_in_database(conn):
     assert keyword_search(conn, "Gulshan ki timing kya hai?") == []
     assert [row[0] for row in keyword_search(conn, "pani ki bottle")] == ["menu:MENU031"]
     assert [row[0] for row in keyword_search(conn, "soft drink chahiye")] == ["menu:MENU032"]
+
+
+# ==========================================
+# KEYWORD FALLBACK BRANCH INTENT
+# ==========================================
+
+def keyword_hit(entry_id):
+
+    # Both entries of one branch get the same ts_rank: their keywords both hold the branch name
+    return (entry_id, "question", "answer", "approved", 0.06)
+
+
+GULSHAN_TIE = [keyword_hit("branch:UTG-KHI-002:hours"), keyword_hit("branch:UTG-KHI-002:location")]
+
+
+@pytest.mark.parametrize("matches", [GULSHAN_TIE, GULSHAN_TIE[::-1]], ids=["hours-first", "location-first"])
+@pytest.mark.parametrize("question, expected", [
+    ("Can I come to Gulshan tonight?", "branch:UTG-KHI-002:hours"),
+    ("Gulshan ki timing kya hai?", "branch:UTG-KHI-002:hours"),
+    ("How many seats does Gulshan have?", "branch:UTG-KHI-002:location"),
+    ("Gulshan seating capacity", "branch:UTG-KHI-002:location"),
+])
+def test_keyword_tie_resolved_by_question_intent(matches, question, expected):
+
+    assert prefer_opening_hours(question, matches, min_score=0)[0] == expected
+
+
+def test_keyword_intent_never_crosses_branches_or_swaps_menu_items():
+
+    other_branch = [keyword_hit("branch:UTG-KHI-002:location"), keyword_hit("branch:UTG-KHI-001:hours")]
+    menu_first = [keyword_hit("menu:MENU001"), keyword_hit("branch:UTG-KHI-002:hours")]
+
+    assert prefer_opening_hours("open tonight?", other_branch, min_score=0)[0] == "branch:UTG-KHI-002:location"
+    assert prefer_opening_hours("biryani tonight?", menu_first, min_score=0)[0] == "menu:MENU001"
+
+
+def test_seating_question_prefers_location_over_hours_in_meaning_search():
+
+    hours_first = [match("branch:UTG-KHI-001:hours", 0.55), match("branch:UTG-KHI-001:location", 0.50)]
+
+    assert prefer_opening_hours("PECHS seats?", hours_first)[0] == "branch:UTG-KHI-001:location"
+    # An untrusted location match is not used
+    assert prefer_opening_hours("PECHS seats?", hours_first[:1] + [match("branch:UTG-KHI-001:location", 0.30)])[0] \
+        == "branch:UTG-KHI-001:hours"
+
+
+def test_keyword_search_breaks_rank_ties_by_entry_id():
+
+    sql = []
+    conn = SimpleNamespace(execute=lambda s, p: sql.append(s) or SimpleNamespace(fetchall=lambda: []))
+
+    keyword_search(conn, "Gulshan")
+
+    assert "ORDER BY rank DESC, entry_id" in sql[0]
+
+
+def test_keyword_fallback_branch_intent_in_database(conn):
+
+    refresh_knowledge(conn, [
+        make_entry("branch:UTG-KHI-002:location", "branch", "Where is the Gulshan-e-Iqbal branch?",
+                   "Gulshan-e-Iqbal: Main University Road. 24 tables, 112 seats.", "test", "approved",
+                   branch_id="UTG-KHI-002", keywords="Gulshan-e-Iqbal address location"),
+        make_entry("branch:UTG-KHI-002:hours", "opening_hours", "When is the Gulshan-e-Iqbal branch open?",
+                   "The Gulshan-e-Iqbal branch is open 24/7.", "test", "approved",
+                   branch_id="UTG-KHI-002", keywords="Gulshan-e-Iqbal timings open close"),
+        make_entry("menu:MENU001", "menu_item", "What is Chicken Biryani?", "Chicken Biryani. Price 420 PKR.",
+                   "test", "approved", keywords="chicken biryani chikkan biryani"),
+    ])
+    # No embeddings stored, so every question reaches keyword search
+    no_embed = lambda texts: [[0.0] for _ in texts]
+
+    # The two Gulshan entries tie on rank in PostgreSQL itself
+    ranks = {row[0]: row[4] for row in keyword_search(conn, "How many seats does Gulshan have?")}
+    assert ranks["branch:UTG-KHI-002:hours"] == ranks["branch:UTG-KHI-002:location"]
+
+    for question, expected in [
+        ("Can I come to Gulshan tonight?", "branch:UTG-KHI-002:hours"),
+        ("Gulshan ki timing kya hai?", "branch:UTG-KHI-002:hours"),
+        ("How many seats does Gulshan have?", "branch:UTG-KHI-002:location"),
+        ("chikkan biryani milega?", "menu:MENU001"),
+    ]:
+        assert answer_question(conn, question, no_embed)[1:] == (expected, "keyword"), question

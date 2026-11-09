@@ -210,6 +210,14 @@ def search_knowledge(conn, query, embed, limit=5, branch_id=None):
 # Cosine similarity a meaning match needs before it is trusted as the answer
 MIN_SCORE = 0.45
 
+# Added to answers whose source data is not confirmed yet
+STATUS_NOTES = {
+    "pending": " (Please note: this is not confirmed yet; staff can confirm it.)",
+    "unavailable": "",
+}
+
+NOT_FOUND_ANSWER = "Sorry, I don't have an answer to that yet. A staff member can help."
+
 
 # Question words that carry no meaning on their own, in English and Roman Urdu.
 # The 'simple' text search config has no stopword list, so they are removed here.
@@ -308,3 +316,26 @@ def prefer_opening_hours(question, matches, min_score=MIN_SCORE):
 
     wanted_id = f"{branch}:{wanted}"
     return next((m for m in matches if m[0] == wanted_id and m[4] >= min_score), best)
+
+
+def answer_question(conn, question, embed, branch_id=None):
+    """
+    Answer a customer question from the knowledge base.
+
+    Returns (answer, entry_id, method): method is "meaning", "keyword"
+    or "none". Unconfirmed answers carry a note saying so.
+    """
+
+    matches = search_knowledge(conn, question, embed, limit=OPEN_STATUS_CANDIDATES, branch_id=branch_id)
+    if matches and matches[0][4] >= MIN_SCORE:
+        chosen = prefer_opening_hours(question, matches)
+        method = "meaning"
+    else:
+        matches = keyword_search(conn, question, limit=OPEN_STATUS_CANDIDATES, branch_id=branch_id)
+        if not matches:
+            return NOT_FOUND_ANSWER, None, "none"
+        chosen = prefer_opening_hours(question, matches, min_score=0)
+        method = "keyword"
+
+    entry_id, _, answer, status, _ = chosen
+    return answer + STATUS_NOTES.get(status, ""), entry_id, method
