@@ -8,6 +8,8 @@ import logging
 # Import Pandas to inspect column types and reuse the change detector
 import pandas as pd
 
+# Import the reusable change detection and hashing functions
+from tracking.change_detector import detect_record_changes
 from tracking.record_hasher import add_record_hash
 
 
@@ -112,3 +114,78 @@ def to_db_value(value):
         # numpy scalars to plain Python numbers
         return value.item()
     return str(value)
+
+
+# ==========================================
+# 4. LOAD ONE TABLE
+# ==========================================
+
+def sync_table(conn, sheet_name, df, key_columns):
+    """
+    Make the PostgreSQL table for one sheet match df in one transaction:
+    insert new rows, rewrite changed rows, delete removed rows.
+    Unchanged rows keep their loaded_at time.
+
+    The table is created on first load, and columns added to the sheet
+    later are added to the table automatically.
+
+    Returns the new/changed/unchanged/removed row keys.
+    """
+
+    # An empty sheet would delete everything; treat it as an error instead
+    if df.empty:
+        raise ValueError(f"Sheet {sheet_name} has no rows; refusing to empty its table.")
+
+    table = sheet_name.lower()
+    prepared, data_columns = prepare_rows(df, key_columns)
+    db_columns = [column.lower() for column in data_columns]
+
+    with conn.transaction():
+        conn.execute(
+            f'CREATE TABLE IF NOT EXISTS "{table}" ('
+            "row_key TEXT PRIMARY KEY, record_hash TEXT NOT NULL, "
+            "loaded_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+        )
+        for column, db_column in zip(data_columns, db_columns):
+            conn.execute(
+                f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS '
+                f'"{db_column}" {column_type(df[column])}'
+            )
+
+        stored_df = pd.DataFrame(
+            conn.execute(f'SELECT row_key, record_hash FROM "{table}"').fetchall(),
+            columns=["row_key", "record_hash"],
+        )
+
+        # Reuse the snapshot change detector (it also rejects duplicate keys)
+        changes = detect_record_changes(stored_df, prepared[["row_key", "record_hash"]], "row_key")
+
+        write_columns = ["row_key", "record_hash", *db_columns]
+        quoted = ", ".join(f'"{column}"' for column in write_columns)
+        upsert_sql = (
+            f'INSERT INTO "{table}" ({quoted}) '
+            f'VALUES ({", ".join(["%s"] * len(write_columns))}) '
+            "ON CONFLICT (row_key) DO UPDATE SET "
+            + ", ".join(f'"{column}" = EXCLUDED."{column}"' for column in write_columns[1:])
+            + ", loaded_at = now()"
+        )
+
+        to_write = prepared[prepared["row_key"].isin(changes["new"] | changes["changed"])]
+        with conn.cursor() as cursor:
+            cursor.executemany(upsert_sql, [
+                tuple(to_db_value(value) for value in row)
+                for row in to_write[["row_key", "record_hash", *data_columns]].itertuples(index=False)
+            ])
+
+        if changes["removed"]:
+            conn.execute(
+                f'DELETE FROM "{table}" WHERE row_key = ANY(%s)',
+                [list(changes["removed"])],
+            )
+
+    logger.info(
+        "Table %s loaded: %s new, %s changed, %s unchanged, %s removed.",
+        table,
+        *(len(changes[kind]) for kind in ("new", "changed", "unchanged", "removed")),
+    )
+    return changes

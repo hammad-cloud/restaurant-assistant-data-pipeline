@@ -7,7 +7,8 @@ import math
 import pandas as pd
 import pytest
 
-from loading.table_loader import column_type, prepare_rows, to_db_value
+from database.connection import DatabaseConfigurationError, connect_to_test_database
+from loading.table_loader import column_type, prepare_rows, sync_table, to_db_value
 
 
 # ==========================================
@@ -46,6 +47,57 @@ def test_to_db_value():
     assert to_db_value(pd.Series([3]).iloc[0]) == 3
     assert to_db_value(pd.Timestamp("2026-10-31")) == "2026-10-31 00:00:00"
     assert to_db_value("PKR") == "PKR"
+
+
+# ==========================================
+# 3. DATABASE TESTS (test database only)
+# ==========================================
+
+@pytest.fixture
+def conn():
+
+    try:
+        connection = connect_to_test_database()
+    except DatabaseConfigurationError:
+        pytest.skip("Test database settings (PG* variables) are not set.")
+
+    connection.autocommit = True
+    connection.execute('DROP TABLE IF EXISTS "test_sheet"')
+    yield connection
+    connection.execute('DROP TABLE IF EXISTS "test_sheet"')
+    connection.close()
+
+
+def rows(conn):
+
+    return dict(conn.execute('SELECT row_key, price FROM "test_sheet"').fetchall())
+
+
+def test_sync_inserts_updates_and_deletes(conn):
+
+    first = pd.DataFrame({"ID": ["A", "B"], "Price": [100, 200]})
+    changes = sync_table(conn, "Test_Sheet", first, ["ID"])
+    assert changes["new"] == {"A", "B"}
+    assert rows(conn) == {"A": 100, "B": 200}
+
+    # Same data again: nothing rewritten
+    changes = sync_table(conn, "Test_Sheet", first, ["ID"])
+    assert changes["unchanged"] == {"A", "B"}
+
+    # A changes, B is removed, C is new, and a new column appears
+    second = pd.DataFrame({"ID": ["A", "C"], "Price": [150.5, 300], "Note": ["x", None]})
+    changes = sync_table(conn, "Test_Sheet", second, ["ID"])
+    assert (changes["changed"], changes["removed"], changes["new"]) == ({"A"}, {"B"}, {"C"})
+    assert rows(conn) == {"A": pytest.approx(150.5), "C": 300}
+    assert conn.execute('SELECT note FROM "test_sheet" WHERE row_key = \'C\'').fetchone() == (None,)
+
+
+def test_sync_refuses_empty_sheet_and_duplicate_keys(conn):
+
+    with pytest.raises(ValueError, match="no rows"):
+        sync_table(conn, "Test_Sheet", pd.DataFrame({"ID": []}), ["ID"])
+    with pytest.raises(ValueError):
+        sync_table(conn, "Test_Sheet", pd.DataFrame({"ID": ["A", "A"]}), ["ID"])
 
 
 def test_prepare_rows_names_duplicate_keys():
