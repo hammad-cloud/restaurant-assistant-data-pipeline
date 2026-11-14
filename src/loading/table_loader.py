@@ -12,6 +12,11 @@ import pandas as pd
 from tracking.change_detector import detect_record_changes
 from tracking.record_hasher import add_record_hash
 
+# Import the reusable checks and quarantine used for bad key rows
+from validation.data_validator import validate_required_values, validate_unique_values
+from validation.quarantine import quarantine_records
+from validation.schema_validator import validate_required_columns
+
 
 # Use the same named logger as the rest of the pipeline
 logger = logging.getLogger("restaurant_pipeline")
@@ -192,10 +197,40 @@ def sync_table(conn, sheet_name, df, key_columns):
 
 
 # ==========================================
-# 5. LOAD ALL TABLES
+# 5. BAD KEY QUARANTINE
 # ==========================================
 
-def load_all_tables(conn, menu_excel, inventory_excel, overrides):
+def quarantine_bad_keys(df, sheet_name, key_columns, rejected_dir):
+    """
+    Move rows with an empty or repeated key to data/rejected/, so one bad
+    row does not stop the rest of the sheet from loading.
+    Every copy of a repeated key is rejected, because there is no way to
+    tell which copy is right. Returns only the good rows.
+    """
+
+    name = sheet_name.lower()
+
+    # A missing key column is a problem with the whole sheet, not one row
+    validate_required_columns(df, key_columns, sheet_name)
+
+    before = len(df)
+    df = quarantine_records(
+        df, validate_required_values(df, key_columns), f"{name}_missing_keys", rejected_dir
+    )
+    df = quarantine_records(
+        df, validate_unique_values(df, key_columns), f"{name}_duplicate_keys", rejected_dir
+    )
+
+    if len(df) < before:
+        logger.warning("Table %s: %s row(s) with a bad key moved to %s.", name, before - len(df), rejected_dir)
+    return df
+
+
+# ==========================================
+# 6. LOAD ALL TABLES
+# ==========================================
+
+def load_all_tables(conn, menu_excel, inventory_excel, overrides, rejected_dir="data/rejected"):
     """
     Load every sheet in TABLES into its own table.
 
@@ -205,10 +240,12 @@ def load_all_tables(conn, menu_excel, inventory_excel, overrides):
 
     Use an autocommit connection, so each table commits on its own.
 
-    A sheet that fails (missing sheet, empty or duplicate keys, database
-    error) is rolled back and keeps its previous data; the other sheets
-    still load. Returns (results, failures): failures maps each failed
-    sheet name to its error message.
+    In a raw sheet, rows with an empty or repeated key are saved to
+    rejected_dir and the good rows still load. A sheet that fails
+    (missing sheet or key column, no good rows, database error) is
+    rolled back and keeps its previous data; the other sheets still
+    load. Returns (results, failures): failures maps each failed sheet
+    name to its error message.
     """
 
     workbooks = {"menu": menu_excel, "inventory": inventory_excel}
@@ -220,6 +257,7 @@ def load_all_tables(conn, menu_excel, inventory_excel, overrides):
             df = overrides.get(sheet_name)
             if df is None:
                 df = pd.read_excel(workbooks[workbook], sheet_name=sheet_name)
+                df = quarantine_bad_keys(df, sheet_name, key_columns, rejected_dir)
             results[sheet_name] = sync_table(conn, sheet_name, df, key_columns)
         except Exception as error:
             failures[sheet_name] = f"{type(error).__name__}: {error}"

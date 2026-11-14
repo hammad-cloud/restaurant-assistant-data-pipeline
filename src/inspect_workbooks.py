@@ -803,6 +803,7 @@ with connect_to_production_database() as db_conn:
         menu_excel,
         inventory_excel,
         overrides={"Menu_Items": menu_df, "Recipes": inventory_df},
+        rejected_dir=str(rejected_dir),
     )
     for sheet_name, message in table_failures.items():
         failed_steps[f"table {sheet_name.lower()}"] = message

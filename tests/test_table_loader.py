@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from database.connection import DatabaseConfigurationError, connect_to_test_database
-from loading.table_loader import column_type, prepare_rows, sync_table, to_db_value
+from loading.table_loader import column_type, prepare_rows, quarantine_bad_keys, sync_table, to_db_value
 
 
 # ==========================================
@@ -38,6 +38,30 @@ def test_prepare_rows_rejects_missing_or_empty_keys():
         prepare_rows(pd.DataFrame({"A": [1]}), ["Menu_ID"])
     with pytest.raises(ValueError, match="empty key"):
         prepare_rows(pd.DataFrame({"Menu_ID": ["M1", None]}), ["Menu_ID"])
+
+
+def test_bad_key_rows_are_quarantined_and_good_rows_kept(tmp_path):
+
+    df = pd.DataFrame({
+        "Deal_ID": ["D1", "D2", "D2", None, " ", "D3"],
+        "Price": [100, 200, 250, 300, 400, 500],
+    })
+
+    good = quarantine_bad_keys(df, "Deals", ["Deal_ID"], tmp_path)
+
+    # Every copy of the repeated D2 is rejected, plus the empty and blank keys
+    assert good["Deal_ID"].tolist() == ["D1", "D3"]
+    assert len(pd.read_csv(tmp_path / "rejected_deals_missing_keys.csv")) == 2
+    assert len(pd.read_csv(tmp_path / "rejected_deals_duplicate_keys.csv")) == 2
+
+    # The good rows now pass the loader's own key checks
+    prepare_rows(good, ["Deal_ID"])
+
+
+def test_missing_key_column_still_fails_the_sheet(tmp_path):
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        quarantine_bad_keys(pd.DataFrame({"Price": [1]}), "Deals", ["Deal_ID"], tmp_path)
 
 
 def test_to_db_value():
