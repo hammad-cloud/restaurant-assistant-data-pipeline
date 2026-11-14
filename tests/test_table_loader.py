@@ -154,6 +154,13 @@ def test_failing_sheet_is_skipped_and_other_sheets_still_load(conn, monkeypatch)
     # The failed sheet was rolled back and keeps its previous data
     assert dict(conn.execute('SELECT row_key, price FROM "test_broken"').fetchall()) == {"X": 1}
 
+    # A skipped sheet is not loaded, not even from its raw sheet, and keeps its data
+    results, failures = table_loader.load_all_tables(
+        conn, None, None, overrides={}, skip=["Test_Sheet", "Test_Broken", "Test_Missing"]
+    )
+    assert (results, failures) == ({}, {})
+    assert rows(conn) == {"A": 150}
+
     conn.execute('DROP TABLE IF EXISTS "test_broken"')
     conn.execute('DROP TABLE IF EXISTS "test_missing"')
 

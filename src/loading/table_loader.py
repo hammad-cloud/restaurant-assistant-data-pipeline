@@ -230,7 +230,7 @@ def quarantine_bad_keys(df, sheet_name, key_columns, rejected_dir):
 # 6. LOAD ALL TABLES
 # ==========================================
 
-def load_all_tables(conn, menu_excel, inventory_excel, overrides, rejected_dir="data/rejected"):
+def load_all_tables(conn, menu_excel, inventory_excel, overrides, rejected_dir="data/rejected", skip=()):
     """
     Load every sheet in TABLES into its own table.
 
@@ -246,6 +246,9 @@ def load_all_tables(conn, menu_excel, inventory_excel, overrides, rejected_dir="
     rolled back and keeps its previous data; the other sheets still
     load. Returns (results, failures): failures maps each failed sheet
     name to its error message.
+
+    Sheets in skip are not loaded and keep their previous data, for
+    example when their own validation step failed earlier in the run.
     """
 
     workbooks = {"menu": menu_excel, "inventory": inventory_excel}
@@ -253,6 +256,9 @@ def load_all_tables(conn, menu_excel, inventory_excel, overrides, rejected_dir="
     failures = {}
 
     for sheet_name, (workbook, key_columns) in TABLES.items():
+        if sheet_name in skip:
+            logger.warning("Table %s skipped; it keeps its previous data.", sheet_name.lower())
+            continue
         try:
             df = overrides.get(sheet_name)
             if df is None:
