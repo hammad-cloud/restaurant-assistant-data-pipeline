@@ -64,7 +64,7 @@ Replace a workbook in `data/raw/` and run the pipeline again. Each run:
 - leaves unchanged rows (and their `loaded_at`) alone;
 - adds new sheet columns to the table automatically;
 - commits each table on its own, and rolls back that table if anything fails;
-- refuses to empty a table when a sheet comes back empty, and rejects empty or duplicate keys;
+- refuses to empty a table when a sheet comes back empty, and moves rows with empty or repeated keys to `data/rejected/`;
 - re-embeds only the documents whose text changed (or every document if the model changes).
 
 To load a new sheet, add one line to `TABLES` with its workbook and key columns.
@@ -81,20 +81,20 @@ only the fixed part is reloaded.
 | Foundation | Read-only, checksum-verified backups of the source workbooks. The pipeline never changes them, so any load can be redone from them. |
 | Ground floor | The database connection and the Menu_Items / Recipes sheets. Every floor above depends on them, so a problem here stops the run. |
 | Floors | Each of the 19 tables, the knowledge base and the embeddings. Each one commits on its own. |
-| Bricks | Single rows. A bad row in Menu_Items or Recipes is moved to `data/rejected/` and the rest of the floor loads; in the other sheets a bad row closes only that sheet's floor. |
+| Bricks | Single rows. A bad row is moved to `data/rejected/` and the rest of its floor still loads. |
 
 One problem stops only the part it affects:
 
 | Problem | What happens |
 |---|---|
-| Bad row (negative price, missing ID, duplicate, orphan recipe) | Saved to `data/rejected/`; the good rows load |
-| Bad sheet (duplicate or empty keys, sheet missing, no rows) | That table is rolled back and keeps its previous data; the other tables still load |
+| Bad row (negative price, missing ID, duplicate, orphan recipe; in the other sheets an empty or repeated key) | Saved to `data/rejected/`; the good rows load |
+| Bad sheet (sheet or key column missing, no good rows, database error) | That table is rolled back and keeps its previous data; the other tables still load |
 | Knowledge base step fails | Previous knowledge entries are kept; embeddings still run |
 | Embedding step fails | Tables and knowledge are saved; embeddings are retried on the next run |
 | Database unreachable, or Menu_Items / Recipes missing required columns | The run stops: later steps cannot work without them |
 
 A run with any failed step ends with a list of what failed and why, for example
-`table deals: ValueError: Duplicate Deal_ID values: DEAL001`, logs it as `ERROR`, and exits with
+`table deals: ValueError: Deals is missing required columns: ['Deal_ID']`, logs it as `ERROR`, and exits with
 status 1. Fix the sheet and run again; only the fixed part is loaded.
 
 ### Price-change demo
