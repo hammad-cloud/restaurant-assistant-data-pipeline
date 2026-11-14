@@ -79,8 +79,8 @@ only the fixed part is reloaded.
 | Building part | In the pipeline |
 |---|---|
 | Foundation | Read-only, checksum-verified backups of the source workbooks. The pipeline never changes them, so any load can be redone from them. |
-| Ground floor | The database connection and the Menu_Items / Recipes sheets. Every floor above depends on them, so a problem here stops the run. |
-| Floors | Each of the 19 tables, the knowledge base and the embeddings. Each one commits on its own. |
+| Ground floor | The database connection and the two workbook files. Every floor depends on them, so a problem here stops the run. |
+| Floors | The menu and recipe checks, each of the 19 tables, the knowledge base and the embeddings. Each one runs and commits on its own. |
 | Bricks | Single rows. A bad row is moved to `data/rejected/` and the rest of its floor still loads. |
 
 One problem stops only the part it affects:
@@ -91,7 +91,9 @@ One problem stops only the part it affects:
 | Bad sheet (sheet or key column missing, no good rows, database error) | That table is rolled back and keeps its previous data; the other tables still load |
 | Knowledge base step fails | Previous knowledge entries are kept; embeddings still run |
 | Embedding step fails | Tables and knowledge are saved; embeddings are retried on the next run |
-| Database unreachable, or Menu_Items / Recipes missing required columns | The run stops: later steps cannot work without them |
+| Menu_Items fails its checks (for example a missing column) | The menu table keeps its previous data; Recipes and the knowledge base wait for the next good menu; the other tables still load |
+| Recipes fails its checks | The recipe table keeps its previous data; the menu and the other tables still load |
+| Database unreachable, or a workbook file cannot be opened | The run stops: later steps cannot work without them |
 
 A run with any failed step ends with a list of what failed and why, for example
 `table deals: ValueError: Deals is missing required columns: ['Deal_ID']`, logs it as `ERROR`, and exits with
