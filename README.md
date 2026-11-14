@@ -71,6 +71,11 @@ To load a new sheet, add one line to `TABLES` with its workbook and key columns.
 
 ### When something fails
 
+The pipeline works like a building. Each table and each pipeline step is its own floor. If one
+floor has a problem, only that floor is closed for repair: it keeps its previous data, the other
+floors stay open, and nothing has to be reset or rebuilt from scratch. Fix that floor and run again;
+only the fixed part is reloaded.
+
 One problem stops only the part it affects:
 
 | Problem | What happens |
