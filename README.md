@@ -76,6 +76,13 @@ floor has a problem, only that floor is closed for repair: it keeps its previous
 floors stay open, and nothing has to be reset or rebuilt from scratch. Fix that floor and run again;
 only the fixed part is reloaded.
 
+| Building part | In the pipeline |
+|---|---|
+| Foundation | Read-only, checksum-verified backups of the source workbooks. The pipeline never changes them, so any load can be redone from them. |
+| Ground floor | The database connection and the Menu_Items / Recipes sheets. Every floor above depends on them, so a problem here stops the run. |
+| Floors | Each of the 19 tables, the knowledge base and the embeddings. Each one commits on its own. |
+| Bricks | Single rows. A bad row in Menu_Items or Recipes is moved to `data/rejected/` and the rest of the floor loads; in the other sheets a bad row closes only that sheet's floor. |
+
 One problem stops only the part it affects:
 
 | Problem | What happens |
